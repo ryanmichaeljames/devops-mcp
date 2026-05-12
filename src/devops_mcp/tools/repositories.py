@@ -49,7 +49,7 @@ async def devops_list_repositories(params: ListRepositoriesInput, ctx: Context) 
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=query_params)
                 response.raise_for_status()
                 return response.json()
@@ -91,7 +91,7 @@ async def devops_get_repository(params: GetRepositoryInput, ctx: Context) -> str
         url = build_url(organization, project, f"git/repositories/{params.repository_id}")
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=build_params())
                 response.raise_for_status()
                 return response.json()
@@ -137,7 +137,7 @@ async def devops_list_branches(params: ListBranchesInput, ctx: Context) -> str:
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=query_params)
                 response.raise_for_status()
                 data = response.json()

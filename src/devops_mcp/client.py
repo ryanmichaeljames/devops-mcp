@@ -1,6 +1,5 @@
-"""Azure DevOps HTTP client with PAT authentication and lifecycle management."""
+"""Azure DevOps HTTP client with Microsoft Entra ID authentication and lifecycle management."""
 
-import base64
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -8,10 +7,18 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
+from azure.identity import (
+    AzureCliCredential,
+    ClientSecretCredential,
+    DefaultAzureCredential,
+    InteractiveBrowserCredential,
+    ManagedIdentityCredential,
+)
 
 logger = logging.getLogger(__name__)
 
 API_VERSION = "7.1"
+AZDO_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
 
 
 @dataclass
@@ -20,22 +27,35 @@ class AppContext:
 
     organization: str | None
     project: str | None
-    pat: str
+    credential: (
+        AzureCliCredential
+        | InteractiveBrowserCredential
+        | ClientSecretCredential
+        | ManagedIdentityCredential
+        | DefaultAzureCredential
+    )
 
 
-def _build_auth_headers(pat: str) -> dict[str, str]:
-    """Build Basic auth headers from a PAT."""
-    token = base64.b64encode(f":{pat}".encode("ascii")).decode("ascii")
-    return {
-        "Authorization": f"Basic {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-
-def get_http_client(pat: str, timeout: float = 30.0) -> httpx.Client:
-    """Create an httpx.Client pre-configured with PAT authentication."""
-    return httpx.Client(headers=_build_auth_headers(pat), timeout=timeout)
+def get_http_client(
+    credential: (
+        AzureCliCredential
+        | InteractiveBrowserCredential
+        | ClientSecretCredential
+        | ManagedIdentityCredential
+        | DefaultAzureCredential
+    ),
+    timeout: float = 30.0,
+) -> httpx.Client:
+    """Create an httpx.Client pre-configured with a Bearer token from the credential."""
+    token = credential.get_token(AZDO_SCOPE).token
+    return httpx.Client(
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        timeout=timeout,
+    )
 
 
 def resolve_org(app_ctx: AppContext, organization: str | None) -> str:
@@ -72,26 +92,67 @@ def build_params(**kwargs) -> dict:
     return params
 
 
+def _build_credential(auth_type: str):
+    """Instantiate an azure-identity credential based on AZDO_AUTH_TYPE."""
+    if auth_type == "azure_cli":
+        return AzureCliCredential()
+    if auth_type == "interactive":
+        return InteractiveBrowserCredential()
+    if auth_type == "client_secret":
+        tenant_id = os.environ.get("AZDO_TENANT_ID", "")
+        client_id = os.environ.get("AZDO_CLIENT_ID", "")
+        client_secret = os.environ.get("AZDO_CLIENT_SECRET", "")
+        missing = [
+            name
+            for name, val in (
+                ("AZDO_TENANT_ID", tenant_id),
+                ("AZDO_CLIENT_ID", client_id),
+                ("AZDO_CLIENT_SECRET", client_secret),
+            )
+            if not val
+        ]
+        if missing:
+            raise ValueError(
+                f"AZDO_AUTH_TYPE=client_secret requires: {', '.join(missing)}"
+            )
+        return ClientSecretCredential(tenant_id, client_id, client_secret)
+    if auth_type == "managed_identity":
+        return ManagedIdentityCredential()
+    if auth_type == "default":
+        return DefaultAzureCredential()
+    raise ValueError(
+        f"Unknown AZDO_AUTH_TYPE '{auth_type}'. "
+        "Valid values: azure_cli, interactive, client_secret, managed_identity, default"
+    )
+
+
 @asynccontextmanager
 async def devops_lifespan(server) -> AsyncIterator[AppContext]:
     """FastMCP lifespan that initializes shared Azure DevOps auth state.
 
     Reads configuration from environment variables:
-    - AZDO_PAT: Personal Access Token (required for all tool calls)
-    - AZDO_ORGANIZATION: Default organization name (optional; can be supplied per-tool)
-    - AZDO_PROJECT: Default project name (optional; can be supplied per-tool)
+    - AZDO_AUTH_TYPE: Credential type (default: azure_cli)
+        azure_cli        — Azure CLI credential (az login)
+        interactive      — Interactive browser login
+        client_secret    — Service principal with client secret
+                           (requires AZDO_TENANT_ID, AZDO_CLIENT_ID, AZDO_CLIENT_SECRET)
+        managed_identity — Managed identity (Azure-hosted workloads)
+        default          — DefaultAzureCredential (tries all methods in order)
+    - AZDO_TENANT_ID:     Entra ID tenant ID (required for client_secret)
+    - AZDO_CLIENT_ID:     Service principal client ID (required for client_secret)
+    - AZDO_CLIENT_SECRET: Service principal client secret (required for client_secret)
+    - AZDO_ORGANIZATION:  Default organization name (optional; can be supplied per-tool)
+    - AZDO_PROJECT:       Default project name (optional; can be supplied per-tool)
 
     Yields:
-        AppContext containing PAT and optional defaults.
+        AppContext containing the credential and optional defaults.
     """
-    pat = os.environ.get("AZDO_PAT", "")
+    auth_type = os.environ.get("AZDO_AUTH_TYPE", "azure_cli").lower()
     organization = os.environ.get("AZDO_ORGANIZATION")
     project = os.environ.get("AZDO_PROJECT")
 
-    if not pat:
-        logger.warning(
-            "AZDO_PAT is not set. All Azure DevOps tool calls will fail authentication."
-        )
+    credential = _build_credential(auth_type)
+    logger.info("Azure DevOps auth type: %s", auth_type)
 
     if organization:
         logger.info("Default Azure DevOps organization: %s", organization)
@@ -103,7 +164,7 @@ async def devops_lifespan(server) -> AsyncIterator[AppContext]:
     else:
         logger.info("No AZDO_PROJECT set; tools must supply 'project'")
 
-    app_ctx = AppContext(organization=organization, project=project, pat=pat)
+    app_ctx = AppContext(organization=organization, project=project, credential=credential)
     logger.info("Azure DevOps MCP server initialized")
 
     yield app_ctx

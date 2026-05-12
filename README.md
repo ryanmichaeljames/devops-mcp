@@ -34,10 +34,7 @@ An MCP server for interacting with Azure DevOps — pipelines, repositories, and
 
 - Python `>=3.10`
 - [uv](https://docs.astral.sh/uv/) (recommended)
-- An Azure DevOps [Personal Access Token (PAT)](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate) with the following scopes:
-  - **Build (Read)** — for pipelines, runs, logs, artifacts
-  - **Code (Read)** — for repositories and branches
-  - **Work Items (Read)** — for work items
+- A Microsoft Entra ID identity with access to Azure DevOps (see [Authentication](#authentication) below)
 
 ### Install
 
@@ -51,14 +48,34 @@ Configure the server via environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `AZDO_PAT` | **Yes** | Azure DevOps Personal Access Token |
+| `AZDO_AUTH_TYPE` | No | Credential type (default: `azure_cli`). See [Authentication](#authentication) |
+| `AZDO_TENANT_ID` | client_secret only | Entra ID tenant ID |
+| `AZDO_CLIENT_ID` | client_secret only | Service principal client ID |
+| `AZDO_CLIENT_SECRET` | client_secret only | Service principal client secret |
 | `AZDO_ORGANIZATION` | No | Default organization name (can be supplied per-tool call) |
 | `AZDO_PROJECT` | No | Default project name (can be supplied per-tool call) |
+
+### Authentication
+
+This server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-identity`](https://pypi.org/project/azure-identity/) library. Set `AZDO_AUTH_TYPE` to one of:
+
+| `AZDO_AUTH_TYPE` | Description | Best for |
+|---|---|---|
+| `azure_cli` *(default)* | Uses the signed-in Azure CLI session (`az login`) | Local development |
+| `interactive` | Opens a browser for interactive sign-in | Local development |
+| `client_secret` | Service principal with client secret | CI/CD, unattended automation |
+| `managed_identity` | Azure Managed Identity | Azure-hosted workloads (VMs, Functions, Container Apps) |
+| `default` | `DefaultAzureCredential` — tries all methods in order | Flexible / multi-environment |
+
+**For `azure_cli` (recommended for local dev):** run `az login` once, then start the server.
+
+**For `client_secret`:** also set `AZDO_TENANT_ID`, `AZDO_CLIENT_ID`, and `AZDO_CLIENT_SECRET`.
 
 ### VS Code MCP Configuration
 
 Add to your `.vscode/mcp.json` (or copy from `.vscode/mcp.json.example`):
 
+**Azure CLI (local dev):**
 ```json
 {
   "servers": {
@@ -67,7 +84,28 @@ Add to your `.vscode/mcp.json` (or copy from `.vscode/mcp.json.example`):
       "command": "uv",
       "args": ["run", "devops-mcp"],
       "env": {
-        "AZDO_PAT": "<your-pat>",
+        "AZDO_AUTH_TYPE": "azure_cli",
+        "AZDO_ORGANIZATION": "<your-org>",
+        "AZDO_PROJECT": "<your-project>"
+      }
+    }
+  }
+}
+```
+
+**Service principal (CI/CD):**
+```json
+{
+  "servers": {
+    "devops-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "devops-mcp"],
+      "env": {
+        "AZDO_AUTH_TYPE": "client_secret",
+        "AZDO_TENANT_ID": "<your-tenant-id>",
+        "AZDO_CLIENT_ID": "<your-client-id>",
+        "AZDO_CLIENT_SECRET": "<your-client-secret>",
         "AZDO_ORGANIZATION": "<your-org>",
         "AZDO_PROJECT": "<your-project>"
       }

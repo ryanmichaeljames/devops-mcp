@@ -58,7 +58,7 @@ async def devops_list_pipelines(params: ListPipelinesInput, ctx: Context) -> str
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=query_params)
                 response.raise_for_status()
                 data = response.json()
@@ -103,7 +103,7 @@ async def devops_list_pipeline_runs(params: ListPipelineRunsInput, ctx: Context)
         url = build_url(organization, project, f"pipelines/{params.pipeline_id}/runs")
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=build_params())
                 response.raise_for_status()
                 return response.json()
@@ -147,7 +147,7 @@ async def devops_get_pipeline_run(params: GetPipelineRunInput, ctx: Context) -> 
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=build_params())
                 response.raise_for_status()
                 return response.json()
@@ -188,7 +188,7 @@ async def devops_list_run_logs(params: ListRunLogsInput, ctx: Context) -> str:
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=build_params())
                 response.raise_for_status()
                 return response.json()
@@ -236,7 +236,7 @@ async def devops_get_run_log_content(params: GetRunLogContentInput, ctx: Context
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 # Override Accept to receive plain text log content
                 response = client.get(
                     url,
@@ -287,7 +287,7 @@ async def devops_list_build_artifacts(params: ListBuildArtifactsInput, ctx: Cont
         query_params = build_params(artifactName=params.artifact_name)
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=query_params)
                 response.raise_for_status()
                 return response.json()

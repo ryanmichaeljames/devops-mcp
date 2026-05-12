@@ -49,7 +49,7 @@ async def devops_get_work_item(params: GetWorkItemInput, ctx: Context) -> str:
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=query_params)
                 response.raise_for_status()
                 return response.json()
@@ -93,7 +93,7 @@ async def devops_list_work_items(params: ListWorkItemsInput, ctx: Context) -> st
         )
 
         def _query():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(url, params=query_params)
                 response.raise_for_status()
                 return response.json()
@@ -143,7 +143,7 @@ async def devops_query_work_items(params: QueryWorkItemsInput, ctx: Context) -> 
         wiql_url = build_url(organization, project, "wit/wiql")
 
         def _run_wiql():
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.post(
                     wiql_url,
                     params=build_params(**{"$top": params.top}),
@@ -179,7 +179,7 @@ async def devops_query_work_items(params: QueryWorkItemsInput, ctx: Context) -> 
                 fields=",".join(params.fields) if params.fields else None,
                 errorPolicy="omit",
             )
-            with get_http_client(app_ctx.pat) as client:
+            with get_http_client(app_ctx.credential) as client:
                 response = client.get(details_url, params=details_params)
                 response.raise_for_status()
                 return response.json().get("value", [])
