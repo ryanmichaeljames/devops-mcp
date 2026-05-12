@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "devops-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "devops-mcp"],
+      "env": {
+        "AZDO_PAT": "<your-pat>",
+        "AZDO_ORGANIZATION": "<your-org>",
+        "AZDO_PROJECT": "<your-project>"
+      }
+    }
+  }
+}
