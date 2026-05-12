@@ -5,7 +5,6 @@
       "command": "uv",
       "args": ["run", "devops-mcp"],
       "env": {
-        "AZDO_AUTH_TYPE": "azure_cli",
         "AZDO_ORGANIZATION": "<your-org>",
         "AZDO_PROJECT": "<your-project>"
       }

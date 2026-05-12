@@ -61,13 +61,13 @@ This server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-ide
 
 | `AZDO_AUTH_TYPE` | Description | Best for |
 |---|---|---|
-| `azure_cli` *(default)* | Uses the signed-in Azure CLI session (`az login`) | Local development |
+| `default` *(default)* | `DefaultAzureCredential` — tries all methods in order | **Recommended — works everywhere** |
+| `azure_cli` | Uses the signed-in Azure CLI session (`az login`) | Local development |
 | `interactive` | Opens a browser for interactive sign-in | Local development |
 | `client_secret` | Service principal with client secret | CI/CD, unattended automation |
 | `managed_identity` | Azure Managed Identity | Azure-hosted workloads (VMs, Functions, Container Apps) |
-| `default` | `DefaultAzureCredential` — tries all methods in order | Flexible / multi-environment |
 
-**For `azure_cli` (recommended for local dev):** run `az login` once, then start the server.
+**For local dev with `default`:** run `az login` once — `DefaultAzureCredential` will pick it up automatically.
 
 **For `client_secret`:** also set `AZDO_TENANT_ID`, `AZDO_CLIENT_ID`, and `AZDO_CLIENT_SECRET`.
 
@@ -75,7 +75,7 @@ This server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-ide
 
 Add to your `.vscode/mcp.json` (or copy from `.vscode/mcp.json.example`):
 
-**Azure CLI (local dev):**
+**Default / local dev (recommended):**
 ```json
 {
   "servers": {
@@ -84,7 +84,6 @@ Add to your `.vscode/mcp.json` (or copy from `.vscode/mcp.json.example`):
       "command": "uv",
       "args": ["run", "devops-mcp"],
       "env": {
-        "AZDO_AUTH_TYPE": "azure_cli",
         "AZDO_ORGANIZATION": "<your-org>",
         "AZDO_PROJECT": "<your-project>"
       }

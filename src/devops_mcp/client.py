@@ -131,13 +131,13 @@ async def devops_lifespan(server) -> AsyncIterator[AppContext]:
     """FastMCP lifespan that initializes shared Azure DevOps auth state.
 
     Reads configuration from environment variables:
-    - AZDO_AUTH_TYPE: Credential type (default: azure_cli)
+    - AZDO_AUTH_TYPE: Credential type (default: default)
+        default          — DefaultAzureCredential (tries all methods in order) [recommended]
         azure_cli        — Azure CLI credential (az login)
         interactive      — Interactive browser login
         client_secret    — Service principal with client secret
                            (requires AZDO_TENANT_ID, AZDO_CLIENT_ID, AZDO_CLIENT_SECRET)
         managed_identity — Managed identity (Azure-hosted workloads)
-        default          — DefaultAzureCredential (tries all methods in order)
     - AZDO_TENANT_ID:     Entra ID tenant ID (required for client_secret)
     - AZDO_CLIENT_ID:     Service principal client ID (required for client_secret)
     - AZDO_CLIENT_SECRET: Service principal client secret (required for client_secret)
@@ -147,7 +147,7 @@ async def devops_lifespan(server) -> AsyncIterator[AppContext]:
     Yields:
         AppContext containing the credential and optional defaults.
     """
-    auth_type = os.environ.get("AZDO_AUTH_TYPE", "azure_cli").lower()
+    auth_type = os.environ.get("AZDO_AUTH_TYPE", "default").lower()
     organization = os.environ.get("AZDO_ORGANIZATION")
     project = os.environ.get("AZDO_PROJECT")
 
