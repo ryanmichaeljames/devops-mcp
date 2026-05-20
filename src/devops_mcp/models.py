@@ -68,8 +68,25 @@ class GetPipelineRunInput(AzDoBaseInput):
 class ListRunLogsInput(AzDoBaseInput):
     """Input for listing log entries for a pipeline run."""
 
-    pipeline_id: int = Field(description="The pipeline ID.", ge=1)
-    run_id: int = Field(description="The run ID.", ge=1)
+    build_id: int = Field(
+        description=(
+            "The build/run ID. This is the 'buildId' value from the Azure DevOps "
+            "build URL (e.g., ?buildId=12345). Identical to run_id."
+        ),
+        ge=1,
+    )
+
+
+class GetBuildInput(AzDoBaseInput):
+    """Input for retrieving details of a specific build by build ID."""
+
+    build_id: int = Field(
+        description=(
+            "The build ID. This is the 'buildId' value from the Azure DevOps "
+            "build URL (e.g., ?buildId=12345). Identical to run_id."
+        ),
+        ge=1,
+    )
 
 
 class GetRunLogContentInput(AzDoBaseInput):

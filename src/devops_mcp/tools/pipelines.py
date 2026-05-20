@@ -16,6 +16,7 @@ from devops_mcp.client import (
     resolve_project,
 )
 from devops_mcp.models import (
+    GetBuildInput,
     GetPipelineRunInput,
     GetRunLogContentInput,
     ListBuildArtifactsInput,
@@ -172,11 +173,12 @@ async def devops_get_pipeline_run(params: GetPipelineRunInput, ctx: Context) -> 
     },
 )
 async def devops_list_run_logs(params: ListRunLogsInput, ctx: Context) -> str:
-    """List log entries (metadata) for an Azure DevOps pipeline run.
+    """List log entries (metadata) for an Azure DevOps pipeline build/run.
 
-    Returns log IDs, line counts, and timestamps for each log in the run.
-    Use the log ID with devops_get_run_log_content to retrieve the actual
-    log text. Note: run_id and build_id share the same numeric value.
+    Returns log IDs, line counts, and timestamps for each log in the build.
+    Accepts build_id directly — the 'buildId' value from a build URL
+    (e.g., dev.azure.com/org/project/_build/results?buildId=12345).
+    Use the returned log IDs with devops_get_run_log_content to fetch log text.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
@@ -184,7 +186,7 @@ async def devops_list_run_logs(params: ListRunLogsInput, ctx: Context) -> str:
         project = resolve_project(app_ctx, params.project)
         url = build_url(
             organization, project,
-            f"pipelines/{params.pipeline_id}/runs/{params.run_id}/logs",
+            f"build/builds/{params.build_id}/logs",
         )
 
         def _query():
@@ -194,8 +196,48 @@ async def devops_list_run_logs(params: ListRunLogsInput, ctx: Context) -> str:
                 return response.json()
 
         data = await asyncio.to_thread(_query)
-        logs = data.get("logs", [])
+        logs = data.get("value", []) if isinstance(data, dict) else data
         return json.dumps({"logs": logs, "count": len(logs)})
+
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+    except Exception as e:
+        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_get_build",
+    annotations={
+        "title": "Get Build",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_get_build(params: GetBuildInput, ctx: Context) -> str:
+    """Get details of a specific Azure DevOps build by build ID.
+
+    Accepts the build_id directly from a build URL
+    (e.g., dev.azure.com/org/project/_build/results?buildId=12345).
+    Returns build status, result, branch, commit, triggered-by info, and
+    the pipeline definition ID and name — useful for resolving a build URL
+    to the pipeline_id needed by other tools.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"build/builds/{params.build_id}")
+
+        def _query():
+            with get_http_client(app_ctx.credential) as client:
+                response = client.get(url, params=build_params())
+                response.raise_for_status()
+                return response.json()
+
+        build = await asyncio.to_thread(_query)
+        return json.dumps(build)
 
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})

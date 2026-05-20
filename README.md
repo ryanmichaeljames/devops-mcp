@@ -10,7 +10,8 @@ An MCP server for interacting with Azure DevOps — pipelines, repositories, and
 | `devops_list_pipelines` | List pipelines defined in a project |
 | `devops_list_pipeline_runs` | List runs for a specific pipeline |
 | `devops_get_pipeline_run` | Get details of a specific pipeline run |
-| `devops_list_run_logs` | List log metadata (IDs, line counts) for a run |
+| `devops_get_build` | Get build details by `buildId` (resolves a build URL to pipeline info) |
+| `devops_list_run_logs` | List log metadata for a build by `buildId` |
 | `devops_get_run_log_content` | Get plain-text content of a specific log |
 | `devops_list_build_artifacts` | List artifacts produced by a build |
 
@@ -48,12 +49,13 @@ Configure the server via environment variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `AZDO_AUTH_TYPE` | No | Credential type (default: `azure_cli`). See [Authentication](#authentication) |
-| `AZDO_TENANT_ID` | client_secret only | Entra ID tenant ID |
+| `AZDO_AUTH_TYPE` | No | Credential type (default: `default`). See [Authentication](#authentication) |
+| `AZDO_TENANT_ID` | interactive / client_secret | Entra ID tenant ID. Required for `client_secret`; recommended for `interactive` to constrain sign-in to the correct tenant |
 | `AZDO_CLIENT_ID` | client_secret only | Service principal client ID |
 | `AZDO_CLIENT_SECRET` | client_secret only | Service principal client secret |
 | `AZDO_ORGANIZATION` | No | Default organization name (can be supplied per-tool call) |
 | `AZDO_PROJECT` | No | Default project name (can be supplied per-tool call) |
+| `AZDO_LOG_LEVEL` | No | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `DEBUG`) |
 
 ### Authentication
 
@@ -68,6 +70,8 @@ This server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-ide
 | `managed_identity` | Azure Managed Identity | Azure-hosted workloads (VMs, Functions, Container Apps) |
 
 **For local dev with `default`:** run `az login` once — `DefaultAzureCredential` will pick it up automatically.
+
+**For `interactive`:** a browser window will open on first use. Set `AZDO_TENANT_ID` to constrain sign-in to a specific Entra ID tenant (recommended when multiple accounts are in use).
 
 **For `client_secret`:** also set `AZDO_TENANT_ID`, `AZDO_CLIENT_ID`, and `AZDO_CLIENT_SECRET`.
 
