@@ -47,7 +47,45 @@ def get_http_client(
     timeout: float = 30.0,
 ) -> httpx.Client:
     """Create an httpx.Client pre-configured with a Bearer token from the credential."""
-    token = credential.get_token(AZDO_SCOPE).token
+    cred_type = type(credential).__name__
+    logger.debug("Acquiring token for scope '%s' using %s", AZDO_SCOPE, cred_type)
+    try:
+        access_token = credential.get_token(AZDO_SCOPE)
+        logger.info(
+            "Token acquired via %s (expires_on=%s, token_length=%d)",
+            cred_type,
+            access_token.expires_on,
+            len(access_token.token),
+        )
+        token = access_token.token
+    except Exception as e:
+        logger.error(
+            "Failed to acquire token via %s: %s: %s",
+            cred_type,
+            type(e).__name__,
+            e,
+        )
+        raise
+
+    def _log_request(request: httpx.Request) -> None:
+        auth_header = request.headers.get("authorization", "")
+        logger.debug(
+            "HTTP %s %s | Authorization header: %s (length=%d)",
+            request.method,
+            request.url,
+            "present" if auth_header else "MISSING",
+            len(auth_header),
+        )
+
+    def _log_response(response: httpx.Response) -> None:
+        logger.debug("HTTP response %d for %s %s", response.status_code, response.request.method, response.request.url)
+        if response.status_code in (301, 302, 303, 307, 308):
+            logger.warning(
+                "Redirect %d -> %s",
+                response.status_code,
+                response.headers.get("location", "<no location>"),
+            )
+
     return httpx.Client(
         headers={
             "Authorization": f"Bearer {token}",
@@ -55,6 +93,7 @@ def get_http_client(
             "Accept": "application/json",
         },
         timeout=timeout,
+        event_hooks={"request": [_log_request], "response": [_log_response]},
     )
 
 
@@ -97,7 +136,8 @@ def _build_credential(auth_type: str):
     if auth_type == "azure_cli":
         return AzureCliCredential()
     if auth_type == "interactive":
-        return InteractiveBrowserCredential()
+        tenant_id = os.environ.get("AZDO_TENANT_ID")
+        return InteractiveBrowserCredential(tenant_id=tenant_id) if tenant_id else InteractiveBrowserCredential()
     if auth_type == "client_secret":
         tenant_id = os.environ.get("AZDO_TENANT_ID", "")
         client_id = os.environ.get("AZDO_CLIENT_ID", "")

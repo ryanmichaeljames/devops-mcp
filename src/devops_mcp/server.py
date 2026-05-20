@@ -1,11 +1,13 @@
 """FastMCP server for Azure DevOps MCP tools."""
 
 import logging
+import os
 import sys
 
 # Configure logging to stderr (stdout reserved for stdio transport)
+_log_level = os.environ.get("AZDO_LOG_LEVEL", "DEBUG").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, _log_level, logging.DEBUG),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     stream=sys.stderr,
 )
