@@ -302,7 +302,7 @@ async def devops_update_pull_request(params: UpdatePullRequestInput, ctx: Contex
 @mcp.tool(
     name="devops_tag_pull_request",
     annotations={
-        "title": "Tag Pull Request",
+        "title": "Tag or Label Pull Request",
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": False,
@@ -310,11 +310,12 @@ async def devops_update_pull_request(params: UpdatePullRequestInput, ctx: Contex
     },
 )
 async def devops_tag_pull_request(params: TagPullRequestInput, ctx: Context) -> str:
-    """Add labels (tags) to an Azure DevOps pull request.
+    """Add labels or tags to an Azure DevOps pull request (PR).
 
-    Adds each specified label using the dedicated labels endpoint. Labels are
+    Use this tool when you want to tag, label, or categorize a pull request.
+    It adds each specified label using the dedicated labels endpoint. Labels are
     created automatically if they do not already exist in the project. Returns
-    a list of the label objects that were created/applied. This operation is
+    a list of the label objects that were created or applied. This operation is
     additive — existing labels on the PR are not removed.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
@@ -352,7 +353,7 @@ async def devops_tag_pull_request(params: TagPullRequestInput, ctx: Context) -> 
 @mcp.tool(
     name="devops_link_work_items_to_pull_request",
     annotations={
-        "title": "Link Work Items to Pull Request",
+        "title": "Link Work Items or Boards Items to Pull Request",
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -362,14 +363,15 @@ async def devops_tag_pull_request(params: TagPullRequestInput, ctx: Context) -> 
 async def devops_link_work_items_to_pull_request(
     params: LinkWorkItemsToPullRequestInput, ctx: Context
 ) -> str:
-    """Associate work items with an existing Azure DevOps pull request.
+    """Link Azure Boards work items to an existing Azure DevOps pull request.
 
-    Links one or more work items to a pull request by adding ArtifactLink
-    relations on the work item side. Azure DevOps does not support updating
-    workItemRefs via the pull request PATCH API. For the most reliable work item
-    linking, prefer supplying work_item_ids when calling
-    devops_create_pull_request. Returns the updated pull request object with the
-    workItemRefs included.
+    Use this tool when you want to link a work item, board item, story, bug,
+    task, or backlog item to a PR. It links one or more work items to a pull
+    request by adding ArtifactLink relations on the work item side. Azure
+    DevOps does not support updating workItemRefs via the pull request PATCH
+    API. For the most reliable work item linking, prefer supplying
+    work_item_ids when calling devops_create_pull_request. Returns the updated
+    pull request object with the workItemRefs included.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:

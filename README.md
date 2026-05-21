@@ -29,8 +29,8 @@ An MCP server for interacting with Azure DevOps — pipelines, repositories, and
 | `devops_list_pull_requests` | List pull requests with optional filters (status, branch, creator, reviewer, labels) |
 | `devops_create_pull_request` | Create a new pull request |
 | `devops_update_pull_request` | Update title, description, status, draft state, target branch, auto-complete, or completion options |
-| `devops_tag_pull_request` | Add labels (tags) to a pull request |
-| `devops_link_work_items_to_pull_request` | Associate work items with a pull request |
+| `devops_tag_pull_request` | Add labels or tags to a pull request (PR) |
+| `devops_link_work_items_to_pull_request` | Link Azure Boards work items, backlog items, bugs, stories, or tasks to a pull request (PR) |
 
 ### Work Items
 | Tool | Description |
