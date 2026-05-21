@@ -15,7 +15,13 @@ from devops_mcp.client import (
     resolve_org,
     resolve_project,
 )
-from devops_mcp.models import GetWorkItemInput, ListWorkItemsInput, QueryWorkItemsInput
+from devops_mcp.models import (
+    CreateWorkItemInput,
+    GetWorkItemInput,
+    ListWorkItemsInput,
+    QueryWorkItemsInput,
+    UpdateWorkItemInput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +202,164 @@ async def devops_query_work_items(params: QueryWorkItemsInput, ctx: Context) -> 
             "query_type": wiql_result.get("queryType"),
             "as_of": wiql_result.get("asOf"),
         })
+
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+    except Exception as e:
+        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+_WIT_API_VERSION = "7.2-preview.3"
+
+
+@mcp.tool(
+    name="devops_create_work_item",
+    annotations={
+        "title": "Create Work Item",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def devops_create_work_item(params: CreateWorkItemInput, ctx: Context) -> str:
+    """Create a new work item in an Azure DevOps project.
+
+    Builds a JSON Patch document from the supplied field values and POSTs it
+    to the Azure DevOps Work Items API. Returns the newly created work item
+    object including its ID, revision, and all fields.
+
+    Common work item types: Bug, Task, User Story, Feature, Epic, Issue,
+    Test Case. The exact set of valid types depends on the project process
+    template (Agile, Scrum, CMMI, or custom).
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"wit/workitems/${params.work_item_type}")
+
+        patch_ops: list[dict] = [
+            {"op": "add", "path": "/fields/System.Title", "value": params.title},
+        ]
+        if params.description is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.Description", "value": params.description})
+        if params.assigned_to is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.AssignedTo", "value": params.assigned_to})
+        if params.state is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.State", "value": params.state})
+        if params.area_path is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.AreaPath", "value": params.area_path})
+        if params.iteration_path is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.IterationPath", "value": params.iteration_path})
+        if params.priority is not None:
+            patch_ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": params.priority})
+        if params.tags is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.Tags", "value": params.tags})
+        if params.parent_id is not None:
+            parent_url = f"https://dev.azure.com/{organization}/_apis/wit/workItems/{params.parent_id}"
+            patch_ops.append({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "System.LinkTypes.Hierarchy-Reverse",
+                    "url": parent_url,
+                    "attributes": {"isLocked": False},
+                },
+            })
+        if params.additional_fields:
+            for field_name, field_value in params.additional_fields.items():
+                patch_ops.append({"op": "add", "path": f"/fields/{field_name}", "value": field_value})
+
+        body = json.dumps(patch_ops).encode()
+
+        def _call():
+            with get_http_client(app_ctx.credential) as client:
+                response = client.post(
+                    url,
+                    params={"api-version": _WIT_API_VERSION},
+                    content=body,
+                    headers={"Content-Type": "application/json-patch+json"},
+                )
+                response.raise_for_status()
+                return response.json()
+
+        data = await asyncio.to_thread(_call)
+        return json.dumps(data)
+
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+    except Exception as e:
+        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_update_work_item",
+    annotations={
+        "title": "Update Work Item",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> str:
+    """Update an existing Azure DevOps work item.
+
+    Builds a JSON Patch document from only the fields you provide and PATCHes
+    the work item. Supply only the fields you want to change — omitted fields
+    are left unchanged. Returns the updated work item object.
+
+    Use additional_fields for any field not exposed as a named parameter
+    (e.g., story points, remaining work, custom fields).
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"wit/workitems/{params.work_item_id}")
+
+        patch_ops: list[dict] = []
+        if params.title is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.Title", "value": params.title})
+        if params.description is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.Description", "value": params.description})
+        if params.assigned_to is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.AssignedTo", "value": params.assigned_to})
+        if params.state is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.State", "value": params.state})
+        if params.area_path is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.AreaPath", "value": params.area_path})
+        if params.iteration_path is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.IterationPath", "value": params.iteration_path})
+        if params.priority is not None:
+            patch_ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": params.priority})
+        if params.tags is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.Tags", "value": params.tags})
+        if params.comment is not None:
+            patch_ops.append({"op": "add", "path": "/fields/System.History", "value": params.comment})
+        if params.additional_fields:
+            for field_name, field_value in params.additional_fields.items():
+                patch_ops.append({"op": "add", "path": f"/fields/{field_name}", "value": field_value})
+
+        if not patch_ops:
+            return json.dumps({"error": True, "message": "No fields to update were provided."})
+
+        body = json.dumps(patch_ops).encode()
+
+        def _call():
+            with get_http_client(app_ctx.credential) as client:
+                response = client.patch(
+                    url,
+                    params={"api-version": _WIT_API_VERSION},
+                    content=body,
+                    headers={"Content-Type": "application/json-patch+json"},
+                )
+                response.raise_for_status()
+                return response.json()
+
+        data = await asyncio.to_thread(_call)
+        return json.dumps(data)
 
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})

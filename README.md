@@ -22,12 +22,24 @@ An MCP server for interacting with Azure DevOps — pipelines, repositories, and
 | `devops_get_repository` | Get details of a specific repository |
 | `devops_list_branches` | List branches in a repository |
 
+### Pull Requests
+| Tool | Description |
+|---|---|
+| `devops_get_pull_request` | Get details of a specific pull request |
+| `devops_list_pull_requests` | List pull requests with optional filters (status, branch, creator, reviewer, labels) |
+| `devops_create_pull_request` | Create a new pull request |
+| `devops_update_pull_request` | Update title, description, status, draft state, target branch, auto-complete, or completion options |
+| `devops_tag_pull_request` | Add labels (tags) to a pull request |
+| `devops_link_work_items_to_pull_request` | Associate work items with a pull request |
+
 ### Work Items
 | Tool | Description |
 |---|---|
 | `devops_get_work_item` | Get a single work item by ID |
 | `devops_list_work_items` | Bulk-fetch up to 200 work items by ID |
 | `devops_query_work_items` | Query work items with WIQL, auto-fetching full details |
+| `devops_create_work_item` | Create a new work item |
+| `devops_update_work_item` | Update fields on an existing work item |
 
 ## Setup
 
@@ -125,7 +137,7 @@ uv run devops-mcp
 
 ## API Reference
 
-All tools use the [Azure DevOps REST API v7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/?view=azure-devops-rest-7.1).
+All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and work item read tools use **v7.1**. Pull request tools and work item create/update use **v7.2-preview**.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).
 
