@@ -5,7 +5,7 @@ import os
 import sys
 
 # Configure logging to stderr (stdout reserved for stdio transport)
-_log_level = os.environ.get("AZDO_LOG_LEVEL", "DEBUG").upper()
+_log_level = os.environ.get("AZDO_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, _log_level, logging.DEBUG),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

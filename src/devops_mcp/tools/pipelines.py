@@ -1,17 +1,20 @@
 """Pipeline tools for Azure DevOps MCP."""
 
-import asyncio
-import json
 import logging
 
+import httpx
 from mcp.server.fastmcp import Context
 
 from devops_mcp._app import mcp
 from devops_mcp.client import (
     AppContext,
+    build_headers,
     build_params,
     build_url,
-    get_http_client,
+    extract_error_message,
+    finalize_response,
+    paginate_results,
+    request_with_retry,
     resolve_org,
     resolve_project,
 )
@@ -50,33 +53,42 @@ async def devops_list_pipelines(params: ListPipelinesInput, ctx: Context) -> str
         organization = resolve_org(app_ctx, params.organization)
         project = resolve_project(app_ctx, params.project)
         url = build_url(organization, project, "pipelines")
-        query_params = build_params(
+
+        effective_top = params.top if params.top is not None else 100
+        base_params = build_params(
             **{
-                "$top": params.top,
-                "continuationToken": params.continuation_token,
+                "$top": effective_top,
                 "orderBy": params.order_by,
             }
         )
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=query_params)
-                response.raise_for_status()
-                data = response.json()
-                continuation = response.headers.get("x-ms-continuationtoken")
-                return data, continuation
+        headers = await build_headers(app_ctx)
+        pipelines, has_more = await paginate_results(
+            app_ctx.http_client,
+            url,
+            headers,
+            base_params,
+            record_key="value",
+            top=effective_top,
+            initial_continuation_token=params.continuation_token,
+        )
 
-        data, continuation_token = await asyncio.to_thread(_query)
-        pipelines = data.get("value", data) if isinstance(data, dict) else data
-        result = {"pipelines": pipelines, "count": len(pipelines)}
-        if continuation_token:
-            result["continuation_token"] = continuation_token
-        return json.dumps(result)
+        result: dict = {
+            "pipelines": pipelines,
+            "count": len(pipelines),
+            "has_more": has_more,
+        }
+        return finalize_response(result)
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_list_pipelines")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -103,22 +115,35 @@ async def devops_list_pipeline_runs(params: ListPipelineRunsInput, ctx: Context)
         project = resolve_project(app_ctx, params.project)
         url = build_url(organization, project, f"pipelines/{params.pipeline_id}/runs")
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=build_params())
-                response.raise_for_status()
-                return response.json()
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=build_params(),
+        )
+        response.raise_for_status()
+        data = response.json()
 
-        data = await asyncio.to_thread(_query)
         runs = data.get("value", data) if isinstance(data, dict) else data
+        total_count = len(runs)
         if params.top:
             runs = runs[: params.top]
-        return json.dumps({"runs": runs, "count": len(runs)})
+        return finalize_response({
+            "runs": runs,
+            "count": len(runs),
+            "has_more": params.top is not None and total_count > params.top,
+        })
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_list_pipeline_runs")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -147,19 +172,25 @@ async def devops_get_pipeline_run(params: GetPipelineRunInput, ctx: Context) -> 
             f"pipelines/{params.pipeline_id}/runs/{params.run_id}",
         )
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=build_params())
-                response.raise_for_status()
-                return response.json()
-
-        run = await asyncio.to_thread(_query)
-        return json.dumps(run)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=build_params(),
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_get_pipeline_run")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -189,20 +220,27 @@ async def devops_list_run_logs(params: ListRunLogsInput, ctx: Context) -> str:
             f"build/builds/{params.build_id}/logs",
         )
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=build_params())
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_query)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=build_params(),
+        )
+        response.raise_for_status()
+        data = response.json()
         logs = data.get("value", []) if isinstance(data, dict) else data
-        return json.dumps({"logs": logs, "count": len(logs)})
+        return finalize_response({"logs": logs, "count": len(logs)})
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_list_run_logs")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -230,19 +268,25 @@ async def devops_get_build(params: GetBuildInput, ctx: Context) -> str:
         project = resolve_project(app_ctx, params.project)
         url = build_url(organization, project, f"build/builds/{params.build_id}")
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=build_params())
-                response.raise_for_status()
-                return response.json()
-
-        build = await asyncio.to_thread(_query)
-        return json.dumps(build)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=build_params(),
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_get_build")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -277,28 +321,31 @@ async def devops_get_run_log_content(params: GetRunLogContentInput, ctx: Context
             endLine=params.end_line,
         )
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                # Override Accept to receive plain text log content
-                response = client.get(
-                    url,
-                    params=query_params,
-                    headers={"Accept": "text/plain"},
-                )
-                response.raise_for_status()
-                return response.text
-
-        content = await asyncio.to_thread(_query)
-        return json.dumps({
+        headers = await build_headers(app_ctx)
+        headers["Accept"] = "text/plain"
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=headers,
+            params=query_params,
+        )
+        response.raise_for_status()
+        return finalize_response({
             "build_id": params.build_id,
             "log_id": params.log_id,
-            "content": content,
+            "content": response.text,
         })
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_get_run_log_content")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -328,13 +375,16 @@ async def devops_list_build_artifacts(params: ListBuildArtifactsInput, ctx: Cont
         )
         query_params = build_params(artifactName=params.artifact_name)
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=query_params)
-                response.raise_for_status()
-                return response.json()
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
 
-        data = await asyncio.to_thread(_query)
         if isinstance(data, list):
             artifacts = data
         elif isinstance(data, dict) and "value" in data:
@@ -344,9 +394,14 @@ async def devops_list_build_artifacts(params: ListBuildArtifactsInput, ctx: Cont
         else:
             artifacts = []
 
-        return json.dumps({"artifacts": artifacts, "count": len(artifacts)})
+        return finalize_response({"artifacts": artifacts, "count": len(artifacts)})
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_list_build_artifacts")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

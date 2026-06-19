@@ -1,29 +1,37 @@
 """Work item tools for Azure DevOps MCP."""
 
-import asyncio
 import json
 import logging
 
+import httpx
 from mcp.server.fastmcp import Context
 
-from devops_mcp._app import mcp
+from devops_mcp._app import mcp, write_tool
 from devops_mcp.client import (
     AppContext,
+    build_headers,
     build_params,
     build_url,
-    get_http_client,
+    extract_error_message,
+    finalize_response,
+    request_with_retry,
     resolve_org,
     resolve_project,
 )
 from devops_mcp.models import (
+    AddWorkItemCommentInput,
     CreateWorkItemInput,
     GetWorkItemInput,
     ListWorkItemsInput,
     QueryWorkItemsInput,
+    UpdateWorkItemCommentInput,
     UpdateWorkItemInput,
 )
 
 logger = logging.getLogger(__name__)
+
+_WIT_API_VERSION = "7.2-preview.3"
+_WIT_COMMENTS_API_VERSION = "7.0-preview.3"
 
 
 @mcp.tool(
@@ -54,19 +62,25 @@ async def devops_get_work_item(params: GetWorkItemInput, ctx: Context) -> str:
             **{"$expand": params.expand},
         )
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=query_params)
-                response.raise_for_status()
-                return response.json()
-
-        work_item = await asyncio.to_thread(_query)
-        return json.dumps(work_item)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_get_work_item")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -98,23 +112,30 @@ async def devops_list_work_items(params: ListWorkItemsInput, ctx: Context) -> st
             **{"$expand": params.expand},
         )
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=query_params)
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_query)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
         work_items = data.get("value", [])
-        return json.dumps({
+        return finalize_response({
             "work_items": work_items,
             "count": data.get("count", len(work_items)),
         })
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_list_work_items")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -148,22 +169,23 @@ async def devops_query_work_items(params: QueryWorkItemsInput, ctx: Context) -> 
         project = resolve_project(app_ctx, params.project)
         wiql_url = build_url(organization, project, "wit/wiql")
 
-        def _run_wiql():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.post(
-                    wiql_url,
-                    params=build_params(**{"$top": params.top}),
-                    json={"query": params.wiql},
-                )
-                response.raise_for_status()
-                return response.json()
+        headers = await build_headers(app_ctx, include_content_type=True)
+        wiql_response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            wiql_url,
+            headers=headers,
+            params=build_params(**{"$top": params.top}),
+            json={"query": params.wiql},
+        )
+        wiql_response.raise_for_status()
+        wiql_result = wiql_response.json()
 
-        wiql_result = await asyncio.to_thread(_run_wiql)
         raw_items = wiql_result.get("workItems", [])
         ids = [item["id"] for item in raw_items]
 
         if not ids:
-            return json.dumps({
+            return finalize_response({
                 "work_items": [],
                 "count": 0,
                 "query_type": wiql_result.get("queryType"),
@@ -171,32 +193,34 @@ async def devops_query_work_items(params: QueryWorkItemsInput, ctx: Context) -> 
             })
 
         if not params.fetch_details:
-            return json.dumps({
+            return finalize_response({
                 "work_item_ids": ids,
                 "count": len(ids),
                 "query_type": wiql_result.get("queryType"),
                 "as_of": wiql_result.get("asOf"),
             })
 
-        def _fetch_batch(batch_ids: list[int]) -> list[dict]:
-            details_url = build_url(organization, project, "wit/workitems")
-            details_params = build_params(
-                ids=",".join(str(i) for i in batch_ids),
-                fields=",".join(params.fields) if params.fields else None,
-                errorPolicy="omit",
-            )
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(details_url, params=details_params)
-                response.raise_for_status()
-                return response.json().get("value", [])
-
+        read_headers = await build_headers(app_ctx)
         all_work_items: list[dict] = []
         for i in range(0, len(ids), 200):
             batch = ids[i : i + 200]
-            items = await asyncio.to_thread(_fetch_batch, batch)
-            all_work_items.extend(items)
+            details_url = build_url(organization, project, "wit/workitems")
+            details_params = build_params(
+                ids=",".join(str(i) for i in batch),
+                fields=",".join(params.fields) if params.fields else None,
+                errorPolicy="omit",
+            )
+            details_response = await request_with_retry(
+                app_ctx.http_client,
+                "GET",
+                details_url,
+                headers=read_headers,
+                params=details_params,
+            )
+            details_response.raise_for_status()
+            all_work_items.extend(details_response.json().get("value", []))
 
-        return json.dumps({
+        return finalize_response({
             "work_items": all_work_items,
             "count": len(all_work_items),
             "query_type": wiql_result.get("queryType"),
@@ -204,15 +228,17 @@ async def devops_query_work_items(params: QueryWorkItemsInput, ctx: Context) -> 
         })
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_query_work_items")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
-_WIT_API_VERSION = "7.2-preview.3"
-
-
-@mcp.tool(
+@write_tool(
     name="devops_create_work_item",
     annotations={
         "title": "Create Work Item",
@@ -271,29 +297,32 @@ async def devops_create_work_item(params: CreateWorkItemInput, ctx: Context) -> 
             for field_name, field_value in params.additional_fields.items():
                 patch_ops.append({"op": "add", "path": f"/fields/{field_name}", "value": field_value})
 
-        body = json.dumps(patch_ops).encode()
-
-        def _call():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.post(
-                    url,
-                    params={"api-version": _WIT_API_VERSION},
-                    content=body,
-                    headers={"Content-Type": "application/json-patch+json"},
-                )
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_call)
-        return json.dumps(data)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            headers=await build_headers(
+                app_ctx,
+                extra={"Content-Type": "application/json-patch+json"},
+            ),
+            params={"api-version": _WIT_API_VERSION},
+            content=json.dumps(patch_ops).encode(),
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_create_work_item")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
-@mcp.tool(
+@write_tool(
     name="devops_update_work_item",
     annotations={
         "title": "Update Work Item",
@@ -343,25 +372,123 @@ async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> 
                 patch_ops.append({"op": "add", "path": f"/fields/{field_name}", "value": field_value})
 
         if not patch_ops:
-            return json.dumps({"error": True, "message": "No fields to update were provided."})
+            return finalize_response({"error": True, "message": "No fields to update were provided."})
 
-        body = json.dumps(patch_ops).encode()
-
-        def _call():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.patch(
-                    url,
-                    params={"api-version": _WIT_API_VERSION},
-                    content=body,
-                    headers={"Content-Type": "application/json-patch+json"},
-                )
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_call)
-        return json.dumps(data)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(
+                app_ctx,
+                extra={"Content-Type": "application/json-patch+json"},
+            ),
+            params={"api-version": _WIT_API_VERSION},
+            content=json.dumps(patch_ops).encode(),
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_update_work_item")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_add_work_item_comment",
+    annotations={
+        "title": "Add Work Item Comment",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def devops_add_work_item_comment(params: AddWorkItemCommentInput, ctx: Context) -> str:
+    """Add a comment to an Azure DevOps work item.
+
+    Posts a new comment to the specified work item's discussion thread.
+    The comment text supports markdown formatting. Returns the created comment
+    object including its commentId, version, createdBy, and createdDate.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"wit/workItems/{params.work_item_id}/comments")
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _WIT_COMMENTS_API_VERSION},
+            json={"text": params.text},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_add_work_item_comment")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_update_work_item_comment",
+    annotations={
+        "title": "Update Work Item Comment",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_update_work_item_comment(params: UpdateWorkItemCommentInput, ctx: Context) -> str:
+    """Update an existing comment on an Azure DevOps work item.
+
+    Replaces the text of the specified comment. Use devops_add_work_item_comment
+    to get the commentId from the original add response, or retrieve existing
+    comment IDs via the Azure DevOps work item comments API. Returns the updated
+    comment object including the new version number.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"wit/workItems/{params.work_item_id}/comments/{params.comment_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _WIT_COMMENTS_API_VERSION},
+            json={"text": params.text},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_update_work_item_comment")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

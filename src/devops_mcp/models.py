@@ -1,6 +1,37 @@
 """Pydantic input models for all Azure DevOps MCP tools."""
 
-from pydantic import BaseModel, ConfigDict, Field
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# GUID validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_guid(value: str, field: str) -> str:
+    """Validate that *value* is a well-formed UUID (8-4-4-4-12 hex, case-insensitive).
+
+    Returns the original value unchanged on success so the field stores whatever
+    case the caller provided. Raises ``ValueError`` with an actionable message on
+    failure so Pydantic wraps it into a ``ValidationError``.
+    """
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        raise ValueError(
+            f"'{field}' must be a valid GUID (format: 8-4-4-4-12 hex, "
+            f"e.g. 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'); got: {value!r}"
+        )
+    return value
+
+
+def _validate_guid_list(values: list[str], field: str) -> list[str]:
+    """Validate every element in *values* as a GUID. Returns the list unchanged."""
+    for v in values:
+        _validate_guid(v, field)
+    return values
 
 
 class AzDoBaseInput(BaseModel):
@@ -32,10 +63,11 @@ class AzDoBaseInput(BaseModel):
 class ListPipelinesInput(AzDoBaseInput):
     """Input for listing pipelines in a project."""
 
-    top: int | None = Field(
-        default=None,
-        description="Maximum number of pipelines to return.",
+    top: int = Field(
+        default=100,
+        description="Maximum number of pipelines to return (max 1000).",
         ge=1,
+        le=1000,
     )
     continuation_token: str | None = Field(
         default=None,
@@ -51,10 +83,11 @@ class ListPipelineRunsInput(AzDoBaseInput):
     """Input for listing runs of a specific pipeline."""
 
     pipeline_id: int = Field(description="The pipeline ID.", ge=1)
-    top: int | None = Field(
-        default=None,
-        description="Maximum number of runs to return (client-side limit).",
+    top: int = Field(
+        default=100,
+        description="Maximum number of runs to return — client-side limit (max 10000, Azure DevOps server-side cap).",
         ge=1,
+        le=10000,
     )
 
 
@@ -165,8 +198,8 @@ class ListBranchesInput(AzDoBaseInput):
         default=None,
         description="Filter branches by a substring (e.g., 'feature').",
     )
-    top: int | None = Field(
-        default=None,
+    top: int = Field(
+        default=100,
         description="Maximum number of branches to return (max 1000).",
         ge=1,
         le=1000,
@@ -235,16 +268,31 @@ class ListPullRequestsInput(AzDoBaseInput):
         default=None,
         description="Filter by title substring.",
     )
-    top: int | None = Field(
-        default=None,
-        description="Maximum number of pull requests to return.",
+    top: int = Field(
+        default=100,
+        description="Maximum number of pull requests to return (max 1000).",
         ge=1,
+        le=1000,
     )
     skip: int | None = Field(
         default=None,
         description="Number of pull requests to skip (for pagination).",
         ge=0,
     )
+
+    @field_validator("creator_id", mode="after")
+    @classmethod
+    def validate_creator_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_guid(v, "creator_id")
+
+    @field_validator("reviewer_id", mode="after")
+    @classmethod
+    def validate_reviewer_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_guid(v, "reviewer_id")
 
 
 class CreatePullRequestInput(AzDoBaseInput):
@@ -293,6 +341,13 @@ class CreatePullRequestInput(AzDoBaseInput):
             "'rebase', or 'rebaseMerge'."
         ),
     )
+
+    @field_validator("reviewers", mode="after")
+    @classmethod
+    def validate_reviewers(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        return _validate_guid_list(v, "reviewers")
 
 
 class UpdatePullRequestInput(AzDoBaseInput):
@@ -359,6 +414,13 @@ class UpdatePullRequestInput(AzDoBaseInput):
             "Transition linked work items to the next logical state on completion."
         ),
     )
+
+    @field_validator("auto_complete_identity_id", mode="after")
+    @classmethod
+    def validate_auto_complete_identity_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_guid(v, "auto_complete_identity_id")
 
 
 class TagPullRequestInput(AzDoBaseInput):
@@ -607,4 +669,34 @@ class UpdateWorkItemInput(AzDoBaseInput):
             "Additional field updates as a dict mapping field reference name to value "
             "(e.g., {'Microsoft.VSTS.Scheduling.StoryPoints': 8})."
         ),
+    )
+
+
+class AddWorkItemCommentInput(AzDoBaseInput):
+    """Input for adding a comment to a work item."""
+
+    work_item_id: int = Field(
+        description="The ID of the work item to add a comment to.",
+        ge=1,
+    )
+    text: str = Field(
+        description="Text of the comment. Supports markdown.",
+        min_length=1,
+    )
+
+
+class UpdateWorkItemCommentInput(AzDoBaseInput):
+    """Input for updating an existing comment on a work item."""
+
+    work_item_id: int = Field(
+        description="The ID of the work item that owns the comment.",
+        ge=1,
+    )
+    comment_id: int = Field(
+        description="The ID of the comment to update.",
+        ge=1,
+    )
+    text: str = Field(
+        description="The updated text of the comment. Supports markdown.",
+        min_length=1,
     )

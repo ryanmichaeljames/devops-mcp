@@ -1,17 +1,20 @@
 """Pull request tools for Azure DevOps MCP."""
 
-import asyncio
 import json
 import logging
 from urllib.parse import quote
 
+import httpx
 from mcp.server.fastmcp import Context
 
-from devops_mcp._app import mcp
+from devops_mcp._app import mcp, write_tool
 from devops_mcp.client import (
     AppContext,
+    build_headers,
     build_url,
-    get_http_client,
+    extract_error_message,
+    finalize_response,
+    request_with_retry,
     resolve_org,
     resolve_project,
 )
@@ -70,19 +73,25 @@ async def devops_get_pull_request(params: GetPullRequestInput, ctx: Context) -> 
         if params.include_work_item_refs:
             query_params["includeWorkItemRefs"] = "true"
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=query_params)
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_query)
-        return json.dumps(data)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_get_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
 @mcp.tool(
@@ -136,26 +145,115 @@ async def devops_list_pull_requests(params: ListPullRequestsInput, ctx: Context)
             for label in params.labels:
                 query_params.append(("searchCriteria.labels", label))
 
-        def _query():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.get(url, params=query_params)
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_query)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
         pull_requests = data.get("value", [])
-        return json.dumps({
+        return finalize_response({
             "pullRequests": pull_requests,
             "count": data.get("count", len(pull_requests)),
+            "has_more": params.top is not None and len(pull_requests) >= params.top,
         })
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_list_pull_requests")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
-@mcp.tool(
+async def _link_work_items(
+    app_ctx: AppContext,
+    organization: str,
+    project: str,
+    repository_id: str,
+    pull_request_id: int,
+    work_item_ids: list[int],
+    read_headers: dict,
+) -> None:
+    """Link work items to a pull request via ArtifactLink relations on the work item side.
+
+    Fetches repository details to obtain the project ID needed to build the
+    artifact URI, then for each work item GETs its current relations and
+    PATCHes an ArtifactLink add operation only when the link is not already
+    present. Uses the work-item JSON-Patch API (_WIT_API_VERSION).
+
+    Raises httpx.HTTPStatusError on any non-2xx response; callers are
+    responsible for catching it within their ordered error handlers.
+    """
+    repo_url = build_url(organization, project, f"git/repositories/{repository_id}")
+    repo_response = await request_with_retry(
+        app_ctx.http_client,
+        "GET",
+        repo_url,
+        headers=read_headers,
+        params={"api-version": "7.1"},
+    )
+    repo_response.raise_for_status()
+    repository = repo_response.json()
+
+    resolved_repository_id = repository["id"]
+    project_id = repository["project"]["id"]
+    artifact_uri = _build_pull_request_artifact_uri(project_id, resolved_repository_id, pull_request_id)
+
+    patch_headers = await build_headers(
+        app_ctx,
+        extra={"Content-Type": "application/json-patch+json"},
+    )
+
+    for work_item_id in work_item_ids:
+        work_item_url = build_url(organization, project, f"wit/workitems/{work_item_id}")
+        work_item_response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            work_item_url,
+            headers=read_headers,
+            params={"api-version": _WIT_API_VERSION, "$expand": "relations"},
+        )
+        work_item_response.raise_for_status()
+        work_item = work_item_response.json()
+
+        relations = work_item.get("relations", [])
+        already_linked = any(
+            relation.get("rel") == "ArtifactLink" and relation.get("url") == artifact_uri
+            for relation in relations
+        )
+        if already_linked:
+            continue
+
+        patch_ops = [
+            {
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "ArtifactLink",
+                    "url": artifact_uri,
+                    "attributes": {"name": "Pull Request"},
+                },
+            }
+        ]
+        patch_response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            work_item_url,
+            headers=patch_headers,
+            params={"api-version": _WIT_API_VERSION},
+            content=json.dumps(patch_ops).encode(),
+        )
+        patch_response.raise_for_status()
+
+
+@write_tool(
     name="devops_create_pull_request",
     annotations={
         "title": "Create Pull Request",
@@ -171,7 +269,13 @@ async def devops_create_pull_request(params: CreatePullRequestInput, ctx: Contex
     Creates a PR from source_ref_name into target_ref_name. Optionally sets
     a description, draft status, reviewers, labels, and work item associations.
     Completion options (delete source branch, merge strategy) can also be set
-    at creation time. Returns the newly created pull request object.
+    at creation time.
+
+    When work_item_ids is supplied, each work item is linked to the newly
+    created PR by adding an ArtifactLink relation on the work item side (the
+    same mechanism used by devops_link_work_items_to_pull_request). Azure
+    DevOps does not honour workItemRefs on the PR create/PATCH API, so that
+    field is never set here. Returns the newly created pull request object.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
@@ -195,8 +299,6 @@ async def devops_create_pull_request(params: CreatePullRequestInput, ctx: Contex
             body["reviewers"] = [{"id": uid} for uid in params.reviewers]
         if params.labels:
             body["labels"] = [{"name": name} for name in params.labels]
-        if params.work_item_ids:
-            body["workItemRefs"] = [{"id": str(wid)} for wid in params.work_item_ids]
 
         completion_options: dict = {}
         if params.delete_source_branch:
@@ -206,26 +308,43 @@ async def devops_create_pull_request(params: CreatePullRequestInput, ctx: Contex
         if completion_options:
             body["completionOptions"] = completion_options
 
-        def _call():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.post(
-                    url,
-                    params={"api-version": _PR_API_VERSION},
-                    json=body,
-                )
-                response.raise_for_status()
-                return response.json()
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _PR_API_VERSION},
+            json=body,
+        )
+        response.raise_for_status()
+        created_pr = response.json()
 
-        data = await asyncio.to_thread(_call)
-        return json.dumps(data)
+        if params.work_item_ids:
+            read_headers = await build_headers(app_ctx)
+            await _link_work_items(
+                app_ctx,
+                organization,
+                project,
+                params.repository_id,
+                created_pr["pullRequestId"],
+                params.work_item_ids,
+                read_headers,
+            )
+
+        return finalize_response(created_pr)
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_create_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
-@mcp.tool(
+@write_tool(
     name="devops_update_pull_request",
     annotations={
         "title": "Update Pull Request",
@@ -280,26 +399,29 @@ async def devops_update_pull_request(params: UpdatePullRequestInput, ctx: Contex
         if completion_options:
             body["completionOptions"] = completion_options
 
-        def _call():
-            with get_http_client(app_ctx.credential) as client:
-                response = client.patch(
-                    url,
-                    params={"api-version": _PR_API_VERSION},
-                    json=body,
-                )
-                response.raise_for_status()
-                return response.json()
-
-        data = await asyncio.to_thread(_call)
-        return json.dumps(data)
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _PR_API_VERSION},
+            json=body,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_update_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
-@mcp.tool(
+@write_tool(
     name="devops_tag_pull_request",
     annotations={
         "title": "Tag or Label Pull Request",
@@ -328,29 +450,34 @@ async def devops_tag_pull_request(params: TagPullRequestInput, ctx: Context) -> 
             f"git/repositories/{params.repository_id}/pullRequests/{params.pull_request_id}/labels",
         )
 
-        def _add_labels():
-            results = []
-            with get_http_client(app_ctx.credential) as client:
-                for label_name in params.labels:
-                    response = client.post(
-                        base_url,
-                        params={"api-version": _PR_API_VERSION},
-                        json={"name": label_name},
-                    )
-                    response.raise_for_status()
-                    results.append(response.json())
-            return results
+        results = []
+        headers = await build_headers(app_ctx, include_content_type=True)
+        for label_name in params.labels:
+            response = await request_with_retry(
+                app_ctx.http_client,
+                "POST",
+                base_url,
+                headers=headers,
+                params={"api-version": _PR_API_VERSION},
+                json={"name": label_name},
+            )
+            response.raise_for_status()
+            results.append(response.json())
 
-        labels = await asyncio.to_thread(_add_labels)
-        return json.dumps({"labels": labels, "count": len(labels)})
+        return finalize_response({"labels": results, "count": len(results)})
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_tag_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
-@mcp.tool(
+@write_tool(
     name="devops_link_work_items_to_pull_request",
     annotations={
         "title": "Link Work Items or Boards Items to Pull Request",
@@ -377,92 +504,43 @@ async def devops_link_work_items_to_pull_request(
     try:
         organization = resolve_org(app_ctx, params.organization)
         project = resolve_project(app_ctx, params.project)
-        repo_url = build_url(
-            organization,
-            project,
-            f"git/repositories/{params.repository_id}",
-        )
         pr_url = build_url(
             organization,
             project,
             f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}",
         )
 
-        def _call():
-            with get_http_client(app_ctx.credential) as client:
-                repo_response = client.get(
-                    repo_url,
-                    params={"api-version": "7.1"},
-                )
-                repo_response.raise_for_status()
-                repository = repo_response.json()
+        read_headers = await build_headers(app_ctx)
+        await _link_work_items(
+            app_ctx,
+            organization,
+            project,
+            params.repository_id,
+            params.pull_request_id,
+            params.work_item_ids,
+            read_headers,
+        )
 
-                repository_id = repository["id"]
-                project_id = repository["project"]["id"]
-                artifact_uri = _build_pull_request_artifact_uri(
-                    project_id,
-                    repository_id,
-                    params.pull_request_id,
-                )
-
-                for work_item_id in params.work_item_ids:
-                    work_item_url = build_url(
-                        organization,
-                        project,
-                        f"wit/workitems/{work_item_id}",
-                    )
-                    work_item_response = client.get(
-                        work_item_url,
-                        params={
-                            "api-version": _WIT_API_VERSION,
-                            "$expand": "relations",
-                        },
-                    )
-                    work_item_response.raise_for_status()
-                    work_item = work_item_response.json()
-
-                    relations = work_item.get("relations", [])
-                    already_linked = any(
-                        relation.get("rel") == "ArtifactLink"
-                        and relation.get("url") == artifact_uri
-                        for relation in relations
-                    )
-                    if already_linked:
-                        continue
-
-                    patch_ops = [
-                        {
-                            "op": "add",
-                            "path": "/relations/-",
-                            "value": {
-                                "rel": "ArtifactLink",
-                                "url": artifact_uri,
-                                "attributes": {"name": "Pull Request"},
-                            },
-                        }
-                    ]
-                    patch_response = client.patch(
-                        work_item_url,
-                        params={"api-version": _WIT_API_VERSION},
-                        content=json.dumps(patch_ops).encode(),
-                        headers={"Content-Type": "application/json-patch+json"},
-                    )
-                    patch_response.raise_for_status()
-
-                pr_response = client.get(
-                    pr_url,
-                    params={
-                        "api-version": _PR_API_VERSION,
-                        "includeWorkItemRefs": "true",
-                    },
-                )
-                pr_response.raise_for_status()
-                return pr_response.json()
-
-        data = await asyncio.to_thread(_call)
-        return json.dumps(data)
+        # Return the updated PR with work item refs
+        pr_response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            pr_url,
+            headers=read_headers,
+            params={
+                "api-version": _PR_API_VERSION,
+                "includeWorkItemRefs": "true",
+            },
+        )
+        pr_response.raise_for_status()
+        return finalize_response(pr_response.json())
 
     except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        logger.exception("Unexpected error in devops_link_work_items_to_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

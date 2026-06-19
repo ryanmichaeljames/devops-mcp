@@ -5,6 +5,8 @@ modules. Tool modules import ``mcp`` from here; server.py imports ``mcp``
 from here and registers tool modules.
 """
 
+import os
+
 from mcp.server.fastmcp import FastMCP
 
 from devops_mcp.client import devops_lifespan
@@ -21,3 +23,18 @@ mcp = FastMCP(
     ),
     lifespan=devops_lifespan,
 )
+
+_ALLOW_WRITE = os.environ.get("AZDO_ALLOW_WRITE", "").lower() == "true"
+_ALLOW_DELETE = os.environ.get("AZDO_ALLOW_DELETE", "").lower() == "true"
+
+
+def write_tool(**kwargs):
+    if _ALLOW_WRITE:
+        return mcp.tool(**kwargs)
+    return lambda f: f
+
+
+def delete_tool(**kwargs):
+    if _ALLOW_DELETE:
+        return mcp.tool(**kwargs)
+    return lambda f: f
