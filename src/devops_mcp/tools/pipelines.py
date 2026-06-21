@@ -125,6 +125,11 @@ async def devops_list_pipeline_runs(params: ListPipelineRunsInput, ctx: Context)
         response.raise_for_status()
         data = response.json()
 
+        # The pipelines/{id}/runs endpoint (api-version 7.1) returns ALL runs in a single
+        # response — it supports neither a $top/top query parameter nor x-ms-continuationtoken
+        # server-side paging. Client-side slicing is therefore the only option, and applying
+        # the cap here is intentional (not a bug). has_more reflects whether the full set
+        # exceeded the requested cap.
         runs = data.get("value", data) if isinstance(data, dict) else data
         total_count = len(runs)
         if params.top:

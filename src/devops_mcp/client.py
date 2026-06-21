@@ -27,7 +27,6 @@ from azure.identity import (
 logger = logging.getLogger(__name__)
 
 API_VERSION = "7.1"
-AZDO_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
 
 _AZDO_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
@@ -86,6 +85,13 @@ def _get_cached_bearer_token(app_ctx: AppContext) -> str | None:
 
 
 def get_bearer_token(app_ctx: AppContext) -> str:
+    # Thread-safety of the cache write: this function runs inside asyncio.to_thread,
+    # so the dict assignment executes on a worker thread.  Safety is ensured by two
+    # independent guarantees: (1) the per-scope asyncio.Lock in build_headers
+    # serializes cold-cache acquisitions — only one caller reaches this function at
+    # a time for a given scope; (2) CPython's GIL makes the single dict assignment
+    # (`_token_cache[key] = value`) atomic, so there is no torn write or lost update
+    # even if a warm-cache reader on the event loop thread races with this write.
     access_token = app_ctx.credential.get_token(_AZDO_SCOPE)
     app_ctx._token_cache[_AZDO_SCOPE] = (access_token.token, float(access_token.expires_on))
     return access_token.token
@@ -206,6 +212,24 @@ _IDEMPOTENT_METHODS = {"GET", "PUT", "DELETE"}
 _RETRY_MAX_WAIT_SECONDS = 30
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a ``Retry-After`` header value into a bounded wait duration.
+
+    Returns the header value as a float capped at ``_RETRY_MAX_WAIT_SECONDS``,
+    or ``None`` when the header is absent or not a valid number.  Only positive
+    values are returned; zero and negative values are treated as absent.
+    """
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    if seconds <= 0:
+        return None
+    return min(seconds, float(_RETRY_MAX_WAIT_SECONDS))
+
+
 async def request_with_retry(
     http_client: httpx.AsyncClient,
     method: str,
@@ -268,6 +292,44 @@ async def request_with_retry(
         last_exc = None
 
         if response.status_code not in _RETRYABLE_STATUS_CODES:
+            # Proactive throttle signals on non-retryable (including 2xx) responses.
+            #
+            # Azure DevOps first *delays* requests by returning HTTP 200 with a
+            # Retry-After header and X-RateLimit-Remaining=0 before it escalates to
+            # HTTP 429 (TF400733).  We must honour these signals so we don't keep
+            # hammering the API until it hard-blocks us.
+            #
+            # Two independent signals to handle:
+            # 1. X-RateLimit-Remaining=0  — server is near the limit; log a WARNING
+            #    so operators are aware, but do not sleep on its own (it may not carry
+            #    a Retry-After on every response).
+            # 2. Retry-After present       — server explicitly requests a delay; sleep
+            #    for the bounded parsed value.  When both signals are present we log
+            #    once and sleep once (no double-logging).
+            rate_remaining = response.headers.get("x-ratelimit-remaining")
+            proactive_wait = _parse_retry_after(response.headers.get("retry-after"))
+
+            if proactive_wait is not None:
+                # Both signals may be present; a single WARNING covers both.
+                logger.warning(
+                    "Proactive throttle on HTTP %d %s %s — Retry-After: %.1fs "
+                    "(X-RateLimit-Remaining: %s); sleeping before returning",
+                    response.status_code,
+                    method_upper,
+                    url,
+                    proactive_wait,
+                    rate_remaining if rate_remaining is not None else "n/a",
+                )
+                await asyncio.sleep(proactive_wait)
+            elif rate_remaining == "0":
+                logger.warning(
+                    "X-RateLimit-Remaining=0 on HTTP %d %s %s — "
+                    "approaching rate limit; no Retry-After header present",
+                    response.status_code,
+                    method_upper,
+                    url,
+                )
+
             return response
 
         is_throttle = response.status_code == 429
@@ -285,13 +347,8 @@ async def request_with_retry(
             return response
 
         # Determine how long to wait before the next attempt.
-        retry_after_header = response.headers.get("retry-after")
-        if retry_after_header is not None:
-            try:
-                wait = min(float(retry_after_header), _RETRY_MAX_WAIT_SECONDS)
-            except ValueError:
-                wait = min(2 ** attempt, _RETRY_MAX_WAIT_SECONDS)
-        else:
+        wait = _parse_retry_after(response.headers.get("retry-after"))
+        if wait is None:
             wait = min(2 ** attempt, _RETRY_MAX_WAIT_SECONDS)
 
         if attempt < max_attempts - 1:
