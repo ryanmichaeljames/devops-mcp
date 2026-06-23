@@ -61,7 +61,8 @@ All configuration is driven by environment variables — no secrets in code, no 
 | `AZDO_LOG_LEVEL` | No | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`. All logs go to stderr; stdout is reserved for MCP stdio transport. |
 | `AZDO_ALLOW_WRITE` | No | off | Set `true` to register create, update, tag, link, and comment (write) tools. When unset the server is read-only — write tools are not visible to the agent at all. |
 | `AZDO_ALLOW_DELETE` | No | off | Set `true` to register delete tools. When unset, delete tools are not visible to the agent. |
-| `AZDO_TOKEN_CACHE_PERSIST` | No | `true` | **Interactive auth only.** When `true` (the default), the MSAL token cache is persisted to disk via the OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret), and an `AuthenticationRecord` sidecar is written to `~/.devops-mcp/auth-record.json` so subsequent server restarts authenticate silently without a new browser prompt. Set `false`, `0`, or `no` to revert to in-memory-only cache. Invalid values fall back to `true` with a logged warning. Has no effect on any auth type other than `interactive`. |
+| `AZDO_EPHEMERAL_TOKEN` | No | `false` | **Interactive auth only.** When `false` (the default), the MSAL token cache is persisted to disk via the OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret), and an `AuthenticationRecord` sidecar is written to `~/.devops-mcp/auth-record.json` so subsequent server restarts authenticate silently without a new browser prompt. Set `true`, `1`, or `yes` to use an in-memory-only cache (no disk cache, no sidecar) — re-prompts on every restart. Invalid values fall back to `false` with a logged warning. Has no effect on any auth type other than `interactive`. |
+| `AZDO_TOKEN_CACHE_PROFILE` | No | — | **Interactive auth only.** A filename-safe suffix (`[A-Za-z0-9_-]`) appended to the MSAL cache name and the `AuthenticationRecord` sidecar so two server instances signed in to **different tenants/accounts** on the same host keep separate caches instead of overwriting each other's pinned account. Omit (or leave empty) for a single-tenant setup — the original shared filenames are used. Characters outside `[A-Za-z0-9_-]` raise an error rather than being silently dropped (sanitizing could collapse two distinct profiles into one shared cache). |
 | `AZDO_AUTH_TIMEOUT_SECONDS` | No | `30` | Maximum seconds to wait for credential acquisition before failing with an auth error. Applies to all auth types. Invalid or non-positive values fall back to `30`. Increase this in slow-network or MFA-heavy environments. |
 
 ---
@@ -74,13 +75,13 @@ The server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-iden
 |---|---|---|
 | `default` *(default)* | `DefaultAzureCredential` — tries environment variables, Azure CLI session, managed identity, and other sources in order. Does not prompt in-process. | **Recommended — works everywhere** |
 | `azure_cli` | Uses the active Azure CLI session (`az login`). Does not prompt in-process. | Local development with an existing CLI session |
-| `interactive` | Opens a browser for interactive sign-in. Supports MFA and multi-account use. Benefits from the persistent token cache (`AZDO_TOKEN_CACHE_PERSIST`): the first launch prompts; subsequent restarts reuse the cached refresh token silently while it remains valid. | Local development without a CLI session |
+| `interactive` | Opens a browser for interactive sign-in. Supports MFA and multi-account use. Benefits from the persistent token cache (on by default; disable with `AZDO_EPHEMERAL_TOKEN=true`): the first launch prompts; subsequent restarts reuse the cached refresh token silently while it remains valid. | Local development without a CLI session |
 | `client_secret` | Service principal with client secret. Requires `AZDO_TENANT_ID`, `AZDO_CLIENT_ID`, and `AZDO_CLIENT_SECRET`. | CI/CD, unattended automation |
 | `managed_identity` | Azure Managed Identity. No credentials to manage. | Azure-hosted workloads (VMs, Functions, Container Apps) |
 
 **For `default` / local dev:** run `az login` once — `DefaultAzureCredential` will pick it up automatically.
 
-**For `interactive`:** a browser window opens on first use. Set `AZDO_TENANT_ID` to constrain sign-in to a specific Entra ID tenant (recommended when multiple accounts are in use). With `AZDO_TOKEN_CACHE_PERSIST=true` (the default) subsequent restarts are silent.
+**For `interactive`:** a browser window opens on first use. Set `AZDO_TENANT_ID` to constrain sign-in to a specific Entra ID tenant (recommended when multiple accounts are in use). The persistent token cache is on by default, so subsequent restarts are silent; set `AZDO_EPHEMERAL_TOKEN=true` to opt out.
 
 **For `client_secret`:** also set `AZDO_TENANT_ID`, `AZDO_CLIENT_ID`, and `AZDO_CLIENT_SECRET`.
 
@@ -102,9 +103,42 @@ Stdout is exclusively reserved for MCP stdio transport messages. All server logs
 
 ### Token cache caveats (`interactive` auth)
 
-When `AZDO_TOKEN_CACHE_PERSIST=true` the MSAL token cache is encrypted at rest using the OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret). The `AuthenticationRecord` sidecar stored at `~/.devops-mcp/auth-record.json` contains only account metadata (home account ID, tenant, authority, username) — no tokens or client secrets.
+By default the MSAL token cache is encrypted at rest using the OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret). The `AuthenticationRecord` sidecar stored at `~/.devops-mcp/auth-record.json` contains only account metadata (home account ID, tenant, authority, username) — no tokens or client secrets.
 
-On headless Linux without a secret store (e.g., no GNOME Keyring / libsecret installed), the OS-encrypted cache may be unavailable. The server logs an actionable warning and falls back to an in-memory-only cache. Set `AZDO_TOKEN_CACHE_PERSIST=false` to suppress the warning and always use in-memory cache on such hosts.
+On headless Linux without a secret store (e.g., no GNOME Keyring / libsecret installed), the OS-encrypted cache may be unavailable. The server logs an actionable warning and falls back to an in-memory-only cache. Set `AZDO_EPHEMERAL_TOKEN=true` to suppress the warning and always use in-memory cache on such hosts.
+
+### Multiple tenants/accounts on one host (`interactive` auth)
+
+The default cache and sidecar filenames (`devops-mcp.cache`, `~/.devops-mcp/auth-record.json`) are shared per host, so two `interactive` sessions signed in to **different tenants/accounts** would overwrite each other's pinned account. Give each session a distinct `AZDO_TOKEN_CACHE_PROFILE` (e.g. `prod`, `dev`) to keep their caches and `AuthenticationRecord` sidecars separate. The profile is a tenant-wide cache key: each entry signs in once (its own browser prompt) and then restarts silently as its own account, while tools still receive the specific `organization`/`project` per call. The profiles never collide.
+
+Register two server entries, each with its own profile and (recommended) matching `AZDO_TENANT_ID`:
+
+```json
+{
+  "servers": {
+    "devops-mcp-prod": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "devops-mcp"],
+      "env": {
+        "AZDO_AUTH_TYPE": "interactive",
+        "AZDO_TENANT_ID": "<prod-tenant-id>",
+        "AZDO_TOKEN_CACHE_PROFILE": "prod"
+      }
+    },
+    "devops-mcp-dev": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "devops-mcp"],
+      "env": {
+        "AZDO_AUTH_TYPE": "interactive",
+        "AZDO_TENANT_ID": "<dev-tenant-id>",
+        "AZDO_TOKEN_CACHE_PROFILE": "dev"
+      }
+    }
+  }
+}
+```
 
 ### Resilience behavior
 

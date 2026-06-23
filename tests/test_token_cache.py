@@ -1,13 +1,13 @@
 """Unit tests for the persistent token cache helpers in client.py.
 
 Covers:
-- (a) _get_token_cache_persist: default=True, explicit false/0/no, unrecognised value.
+- (a) _get_ephemeral_token: default=False, explicit true/1/yes, unrecognised value.
 - (b) _load_auth_record: absent file, corrupt file, valid serialized record.
 - (c) _save_auth_record: file is written and can be round-tripped.
 - (d) One-shot wrapper regression: a fake credential whose authenticate() calls
   self.get_token exactly once — asserts that authenticate + save are each called
   exactly once, proving restore-before-authenticate prevents unbounded recursion.
-- (e) _build_interactive_credential: with AZDO_TOKEN_CACHE_PERSIST=false returns a
+- (e) _build_interactive_credential: with AZDO_EPHEMERAL_TOKEN=true returns a
   plain InteractiveBrowserCredential (no wrapper installed, no sidecar written).
 """
 
@@ -18,42 +18,103 @@ import pytest
 
 from devops_mcp.client import (
     _AZDO_SCOPE,
-    _get_token_cache_persist,
+    _get_ephemeral_token,
+    _get_token_cache_profile,
     _load_auth_record,
     _save_auth_record,
 )
 
 # ---------------------------------------------------------------------------
-# _get_token_cache_persist
+# _get_ephemeral_token
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "env_value,expected",
     [
-        ("", True),       # unset / empty → default ON
+        ("", False),       # unset / empty → default OFF (persist)
         ("true", True),
         ("True", True),
         ("1", True),
         ("yes", True),
+        ("YES", True),
         ("false", False),
         ("False", False),
         ("0", False),
         ("no", False),
-        ("NO", False),
     ],
 )
-def test_get_token_cache_persist_values(env_value, expected, monkeypatch):
+def test_get_ephemeral_token_values(env_value, expected, monkeypatch):
     if env_value == "":
-        monkeypatch.delenv("AZDO_TOKEN_CACHE_PERSIST", raising=False)
+        monkeypatch.delenv("AZDO_EPHEMERAL_TOKEN", raising=False)
     else:
-        monkeypatch.setenv("AZDO_TOKEN_CACHE_PERSIST", env_value)
-    assert _get_token_cache_persist() == expected
+        monkeypatch.setenv("AZDO_EPHEMERAL_TOKEN", env_value)
+    assert _get_ephemeral_token() == expected
 
 
-def test_get_token_cache_persist_unrecognised_falls_back_to_true(monkeypatch):
-    monkeypatch.setenv("AZDO_TOKEN_CACHE_PERSIST", "maybe")
-    assert _get_token_cache_persist() is True
+def test_get_ephemeral_token_unrecognised_falls_back_to_false(monkeypatch):
+    monkeypatch.setenv("AZDO_EPHEMERAL_TOKEN", "maybe")
+    assert _get_ephemeral_token() is False
+
+
+# ---------------------------------------------------------------------------
+# _get_token_cache_profile
+# ---------------------------------------------------------------------------
+
+
+def test_token_cache_profile_unset(monkeypatch):
+    monkeypatch.delenv("AZDO_TOKEN_CACHE_PROFILE", raising=False)
+    assert _get_token_cache_profile() == ""
+
+
+def test_token_cache_profile_blank_is_empty(monkeypatch):
+    monkeypatch.setenv("AZDO_TOKEN_CACHE_PROFILE", "   ")
+    assert _get_token_cache_profile() == ""
+
+
+def test_token_cache_profile_valid_passthrough(monkeypatch):
+    monkeypatch.setenv("AZDO_TOKEN_CACHE_PROFILE", "prod-tenant_1")
+    assert _get_token_cache_profile() == "prod-tenant_1"
+
+
+@pytest.mark.parametrize("bad_value", ["a/b", "a.b", "a b", "a:b", "a\\b", "café"])
+def test_token_cache_profile_rejects_invalid_chars(bad_value, monkeypatch):
+    monkeypatch.setenv("AZDO_TOKEN_CACHE_PROFILE", bad_value)
+    with pytest.raises(ValueError, match="AZDO_TOKEN_CACHE_PROFILE"):
+        _get_token_cache_profile()
+
+
+def test_build_interactive_credential_profile_isolates_cache_and_sidecar(
+    monkeypatch, tmp_path
+):
+    """A set profile suffixes both the MSAL cache name and the sidecar path."""
+    monkeypatch.delenv("AZDO_EPHEMERAL_TOKEN", raising=False)
+    monkeypatch.setenv("AZDO_TOKEN_CACHE_PROFILE", "prod")
+    monkeypatch.delenv("AZDO_TENANT_ID", raising=False)
+
+    from devops_mcp import client
+
+    monkeypatch.setattr(client, "_get_user_config_dir", lambda: tmp_path)
+
+    captured = {}
+
+    def _fake_load(path):
+        captured["record_path"] = path
+        return object()
+
+    def _fake_cache_opts(*, name, allow_unencrypted_storage):
+        captured["cache_name"] = name
+        return MagicMock()
+
+    monkeypatch.setattr(client, "_load_auth_record", _fake_load)
+
+    with patch.object(client, "TokenCachePersistenceOptions", _fake_cache_opts), \
+            patch.object(client, "InteractiveBrowserCredential") as MockCred:
+        MockCred.return_value = MagicMock()
+        client._build_interactive_credential()
+
+    assert captured["cache_name"] == "devops-mcp.prod.cache"
+    assert captured["record_path"] == tmp_path / "auth-record.prod.json"
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +212,7 @@ def test_one_shot_wrapper_no_recursion(tmp_path, monkeypatch):
     from devops_mcp.client import _build_interactive_credential
 
     # Provide a realistic serialised record so authenticate() is called.
-    monkeypatch.delenv("AZDO_TOKEN_CACHE_PERSIST", raising=False)
+    monkeypatch.delenv("AZDO_EPHEMERAL_TOKEN", raising=False)
     monkeypatch.delenv("AZDO_TENANT_ID", raising=False)
 
     fake_token = MagicMock()
@@ -231,9 +292,9 @@ def test_one_shot_wrapper_no_recursion(tmp_path, monkeypatch):
 
 
 def test_build_interactive_credential_cache_off_no_wrapper(monkeypatch, tmp_path):
-    """With AZDO_TOKEN_CACHE_PERSIST=false the plain credential is returned
+    """With AZDO_EPHEMERAL_TOKEN=true the plain credential is returned
     without any wrapper and no sidecar is written."""
-    monkeypatch.setenv("AZDO_TOKEN_CACHE_PERSIST", "false")
+    monkeypatch.setenv("AZDO_EPHEMERAL_TOKEN", "true")
     monkeypatch.delenv("AZDO_TENANT_ID", raising=False)
 
     from devops_mcp.client import _build_interactive_credential

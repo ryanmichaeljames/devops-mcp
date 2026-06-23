@@ -514,26 +514,62 @@ def _get_auth_timeout_seconds() -> float:
     return _DEFAULT_AUTH_TIMEOUT_SECONDS
 
 
-def _get_token_cache_persist() -> bool:
-    """Return whether interactive token cache persistence is enabled.
+def _get_ephemeral_token() -> bool:
+    """Return whether the interactive token cache should be ephemeral (in-memory).
 
-    Reads AZDO_TOKEN_CACHE_PERSIST (default: true — unset/empty means enabled).
-    Only an explicit "false", "0", or "no" (case-insensitive) disables it.
-    Any other unrecognised value falls back to the default (true) with a warning.
+    Reads AZDO_EPHEMERAL_TOKEN (default: false — unset/empty means persist to
+    disk).  Only an explicit "true", "1", or "yes" (case-insensitive) opts into
+    an ephemeral, in-memory-only token cache (no disk cache, no sidecar written).
+    Any other unrecognised value falls back to the default (false) with a warning.
     """
-    raw = os.environ.get("AZDO_TOKEN_CACHE_PERSIST", "").strip().lower()
+    raw = os.environ.get("AZDO_EPHEMERAL_TOKEN", "").strip().lower()
     if not raw:
-        return True
-    if raw in ("false", "0", "no"):
         return False
     if raw in ("true", "1", "yes"):
         return True
+    if raw in ("false", "0", "no"):
+        return False
     logger.warning(
-        "AZDO_TOKEN_CACHE_PERSIST=%r is not a recognised boolean value; "
-        "using default (true)",
-        os.environ.get("AZDO_TOKEN_CACHE_PERSIST", ""),
+        "AZDO_EPHEMERAL_TOKEN=%r is not a recognised boolean value; "
+        "using default (false)",
+        os.environ.get("AZDO_EPHEMERAL_TOKEN", ""),
     )
-    return True
+    return False
+
+
+def _get_token_cache_profile() -> str:
+    """Return a filename-safe profile suffix for the token cache and sidecar.
+
+    Reads AZDO_TOKEN_CACHE_PROFILE (default: empty).  When set, the value is
+    appended to both the MSAL cache name and the AuthenticationRecord sidecar
+    filename so that two server processes connecting to different
+    tenants/accounts on the same host do not share (and overwrite) each other's
+    cache and pinned account.  An empty/unset value preserves the original
+    single-profile filenames for backwards compatibility.
+
+    Only ``[A-Za-z0-9_-]`` are permitted.  Any other character raises
+    ``ValueError`` rather than being silently dropped: sanitizing would let two
+    distinct profiles (e.g. ``a/b`` and ``a.b``) collapse to the same value and
+    secretly share one cache — the exact cross-tenant collision this option
+    exists to prevent.  Failing fast forces the operator to pick an unambiguous,
+    filesystem-safe name.
+    """
+    raw = os.environ.get("AZDO_TOKEN_CACHE_PROFILE", "").strip()
+    if not raw:
+        return ""
+    allowed = (
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789-_"
+    )
+    if any(c not in allowed for c in raw):
+        raise ValueError(
+            f"AZDO_TOKEN_CACHE_PROFILE={raw!r} contains characters outside "
+            "[A-Za-z0-9_-]. Choose a profile name using only letters, digits, "
+            "dashes, or underscores so it is an unambiguous, filesystem-safe "
+            "cache identifier."
+        )
+    return raw
 
 
 def _get_user_config_dir() -> Path:
@@ -600,12 +636,12 @@ def _save_auth_record(record: "AuthenticationRecord", record_path: Path) -> None
 
 
 def _build_interactive_credential() -> InteractiveBrowserCredential:
-    """Build an InteractiveBrowserCredential with optional persistent token cache.
+    """Build an InteractiveBrowserCredential with a persistent token cache.
 
-    When AZDO_TOKEN_CACHE_PERSIST is enabled (the default), the credential is
-    constructed with TokenCachePersistenceOptions so MSAL stores its token cache
-    on disk via the OS secret store (DPAPI on Windows, Keychain on macOS,
-    libsecret on Linux).
+    By default the credential is constructed with TokenCachePersistenceOptions
+    so MSAL stores its token cache on disk via the OS secret store (DPAPI on
+    Windows, Keychain on macOS, libsecret on Linux).  Set AZDO_EPHEMERAL_TOKEN=true
+    to opt into an in-memory-only cache (no disk cache, no sidecar).
 
     An AuthenticationRecord sidecar is loaded from the user config dir on
     startup so that MSAL can silently select the previously authenticated account
@@ -619,10 +655,9 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
     """
     tenant_id = os.environ.get("AZDO_TENANT_ID")
 
-    persist = _get_token_cache_persist()
-    if not persist:
+    if _get_ephemeral_token():
         logger.info(
-            "AZDO_TOKEN_CACHE_PERSIST=false: "
+            "AZDO_EPHEMERAL_TOKEN=true: "
             "interactive credential uses in-memory token cache only"
         )
         return (
@@ -631,12 +666,22 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
             else InteractiveBrowserCredential()
         )
 
+    # Optional profile suffix isolates the cache + sidecar per tenant/account so
+    # concurrent sessions on one host do not collide.
+    profile = _get_token_cache_profile()
+    cache_name = "devops-mcp.cache" if not profile else f"devops-mcp.{profile}.cache"
+    record_filename = (
+        "auth-record.json" if not profile else f"auth-record.{profile}.json"
+    )
+    if profile:
+        logger.info("Token cache profile active: %r (cache name=%s)", profile, cache_name)
+
     # Build cache persistence options.  allow_unencrypted_storage=False (the
     # default) means the credential will raise on platforms without an OS
     # secret store — we catch that below and log an actionable message.
     try:
         cache_opts = TokenCachePersistenceOptions(
-            name="devops-mcp.cache",
+            name=cache_name,
             allow_unencrypted_storage=False,
         )
     except Exception as exc:
@@ -644,7 +689,7 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
             "Could not initialise TokenCachePersistenceOptions (%s); "
             "falling back to in-memory token cache.  "
             "On headless Linux, install libsecret-1 or set "
-            "AZDO_TOKEN_CACHE_PERSIST=false to suppress this warning.",
+            "AZDO_EPHEMERAL_TOKEN=true to suppress this warning.",
             exc,
         )
         return (
@@ -654,7 +699,7 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
         )
 
     config_dir = _get_user_config_dir()
-    record_path = config_dir / "auth-record.json"
+    record_path = config_dir / record_filename
     auth_record = _load_auth_record(record_path)
 
     kwargs: dict = {"cache_persistence_options": cache_opts}
@@ -670,7 +715,7 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
             "Could not build InteractiveBrowserCredential with persistent cache (%s); "
             "falling back to in-memory credential.  "
             "On headless Linux without a secret store, set "
-            "AZDO_TOKEN_CACHE_PERSIST=false to suppress this warning.",
+            "AZDO_EPHEMERAL_TOKEN=true to suppress this warning.",
             exc,
         )
         return (

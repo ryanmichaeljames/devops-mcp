@@ -73,6 +73,7 @@ Configured entirely via environment variables:
 | `AZDO_TENANT_ID` | Required for `interactive` and `client_secret` |
 | `AZDO_CLIENT_ID` | Required for `client_secret` |
 | `AZDO_CLIENT_SECRET` | Required for `client_secret` |
+| `AZDO_TOKEN_CACHE_PROFILE` | Filename-safe suffix (`[A-Za-z0-9_-]`) isolating the interactive token cache + sidecar per tenant/account on a shared host; empty = shared default filenames |
 | `AZDO_LOG_LEVEL` | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
 
 `default` auth tries all credential sources in order (environment, Azure CLI, managed identity) and is the right choice for local development.
