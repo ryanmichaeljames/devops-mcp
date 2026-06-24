@@ -19,11 +19,17 @@ from devops_mcp.client import (
     resolve_project,
 )
 from devops_mcp.models import (
+    AddPullRequestCommentInput,
     CreatePullRequestInput,
+    CreatePullRequestThreadInput,
     GetPullRequestInput,
+    GetPullRequestThreadInput,
     LinkWorkItemsToPullRequestInput,
     ListPullRequestsInput,
+    ListPullRequestThreadsInput,
+    SetPullRequestThreadStatusInput,
     TagPullRequestInput,
+    UpdatePullRequestCommentInput,
     UpdatePullRequestInput,
 )
 
@@ -31,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 _PR_API_VERSION = "7.2-preview.2"
 _WIT_API_VERSION = "7.2-preview.3"
+_THREAD_API_VERSION = "7.1"
 
 
 def _build_pull_request_artifact_uri(
@@ -543,4 +550,347 @@ async def devops_link_work_items_to_pull_request(
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_link_work_items_to_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_list_pull_request_threads",
+    annotations={
+        "title": "List Pull Request Threads",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_list_pull_request_threads(
+    params: ListPullRequestThreadsInput, ctx: Context
+) -> str:
+    """List all comment threads on an Azure DevOps pull request.
+
+    Returns a JSON object with keys:
+    - threads: array of thread objects, each containing id, status, comments,
+      threadContext (file path and line/offset when present), identities, and
+      timestamps.
+    - count: total number of threads returned.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/threads",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params={"api-version": _THREAD_API_VERSION},
+        )
+        response.raise_for_status()
+        data = response.json()
+        threads = data.get("value", [])
+        return finalize_response({"threads": threads, "count": data.get("count", len(threads))})
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_list_pull_request_threads")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_get_pull_request_thread",
+    annotations={
+        "title": "Get Pull Request Thread",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_get_pull_request_thread(
+    params: GetPullRequestThreadInput, ctx: Context
+) -> str:
+    """Get a single comment thread from an Azure DevOps pull request.
+
+    Returns the full thread object including id, status, comments (with content,
+    author, and timestamps), threadContext (file path and line/offset for inline
+    threads), and publishedDate / lastUpdatedDate.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/threads/{params.thread_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params={"api-version": _THREAD_API_VERSION},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_get_pull_request_thread")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_create_pull_request_thread",
+    annotations={
+        "title": "Create Pull Request Thread",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def devops_create_pull_request_thread(
+    params: CreatePullRequestThreadInput, ctx: Context
+) -> str:
+    """Create a new comment thread on an Azure DevOps pull request.
+
+    When file_path is supplied, creates an inline thread anchored to the
+    specified file and line range (code comment). When file_path is omitted,
+    creates a general PR-level comment thread.
+
+    Returns the newly created thread object including its id, status, comments,
+    and threadContext when applicable.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/threads",
+        )
+
+        body: dict = {
+            "comments": [
+                {
+                    "parentCommentId": 0,
+                    "content": params.content,
+                    "commentType": "text",
+                }
+            ],
+            "status": params.status,
+        }
+
+        if params.file_path is not None:
+            body["threadContext"] = {
+                "filePath": params.file_path,
+                "rightFileStart": {
+                    "line": params.right_file_start_line,
+                    "offset": params.right_file_start_offset,
+                },
+                "rightFileEnd": {
+                    "line": params.right_file_end_line,
+                    "offset": params.right_file_end_offset,
+                },
+            }
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _THREAD_API_VERSION},
+            json=body,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_create_pull_request_thread")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_set_pull_request_thread_status",
+    annotations={
+        "title": "Set Pull Request Thread Status",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_set_pull_request_thread_status(
+    params: SetPullRequestThreadStatusInput, ctx: Context
+) -> str:
+    """Update the status of a comment thread on an Azure DevOps pull request.
+
+    Valid status values: 'active', 'fixed', 'wontFix', 'closed', 'byDesign',
+    'pending'. Returns the updated thread object including id, status, comments,
+    and threadContext.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/threads/{params.thread_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _THREAD_API_VERSION},
+            json={"status": params.status},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_set_pull_request_thread_status")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_add_pull_request_comment",
+    annotations={
+        "title": "Add Pull Request Comment",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def devops_add_pull_request_comment(
+    params: AddPullRequestCommentInput, ctx: Context
+) -> str:
+    """Add a reply comment to an existing thread on an Azure DevOps pull request.
+
+    Use parent_comment_id=0 (default) to add a top-level reply on the thread.
+    Supply a non-zero parent_comment_id to nest the reply under a specific
+    comment within the thread.
+
+    Returns the newly created comment object including id, content, author,
+    commentType, and publishedDate.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/threads/{params.thread_id}/comments",
+        )
+
+        body: dict = {
+            "parentCommentId": params.parent_comment_id,
+            "content": params.content,
+            "commentType": "text",
+        }
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _THREAD_API_VERSION},
+            json=body,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_add_pull_request_comment")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_update_pull_request_comment",
+    annotations={
+        "title": "Update Pull Request Comment",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_update_pull_request_comment(
+    params: UpdatePullRequestCommentInput, ctx: Context
+) -> str:
+    """Update the content of an existing comment in an Azure DevOps pull request thread.
+
+    Returns the updated comment object including id, content, author,
+    commentType, lastUpdatedDate, and isDeleted flag.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/threads/{params.thread_id}/comments/{params.comment_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _THREAD_API_VERSION},
+            json={"content": params.content},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_update_pull_request_comment")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

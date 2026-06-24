@@ -2,7 +2,7 @@
 
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +454,201 @@ class LinkWorkItemsToPullRequestInput(AzDoBaseInput):
     )
     work_item_ids: list[int] = Field(
         description="List of work item IDs to associate with the pull request.",
+        min_length=1,
+    )
+
+
+class ListPullRequestThreadsInput(AzDoBaseInput):
+    """Input for listing all comment threads on a pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+
+
+class GetPullRequestThreadInput(AzDoBaseInput):
+    """Input for retrieving a single comment thread on a pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    thread_id: int = Field(
+        description="The thread ID.",
+        ge=1,
+    )
+
+
+_VALID_THREAD_STATUSES = {"active", "fixed", "wontFix", "closed", "byDesign", "pending"}
+
+
+class CreatePullRequestThreadInput(AzDoBaseInput):
+    """Input for creating a new comment thread on a pull request.
+
+    When file_path is provided, the thread is anchored to a specific code line
+    (inline comment); right_file_start_line and right_file_end_line are required
+    in that case. When file_path is omitted, the thread is a general PR-level
+    comment and line fields are ignored.
+    """
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    content: str = Field(
+        description="Text of the initial comment on the thread.",
+        min_length=1,
+    )
+    status: str = Field(
+        default="active",
+        description=(
+            "Initial thread status. Valid values: 'active', 'fixed', 'wontFix', "
+            "'closed', 'byDesign', 'pending'. Defaults to 'active'."
+        ),
+    )
+    file_path: str | None = Field(
+        default=None,
+        description=(
+            "File path to anchor the thread to a specific code line "
+            "(e.g., '/src/main.py'). Omit to create a general PR-level comment."
+        ),
+    )
+    right_file_start_line: int | None = Field(
+        default=None,
+        description=(
+            "Start line in the file (1-based, inclusive). "
+            "Required when file_path is provided."
+        ),
+        ge=1,
+    )
+    right_file_end_line: int | None = Field(
+        default=None,
+        description=(
+            "End line in the file (1-based, inclusive). "
+            "Required when file_path is provided."
+        ),
+        ge=1,
+    )
+    right_file_start_offset: int = Field(
+        default=1,
+        description="Column offset of the start position (1-based). Defaults to 1.",
+        ge=1,
+    )
+    right_file_end_offset: int = Field(
+        default=1,
+        description="Column offset of the end position (1-based). Defaults to 1.",
+        ge=1,
+    )
+
+    @field_validator("status", mode="after")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in _VALID_THREAD_STATUSES:
+            raise ValueError(
+                f"'status' must be one of {sorted(_VALID_THREAD_STATUSES)}; got: {v!r}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_inline_line_fields(self) -> "CreatePullRequestThreadInput":
+        if self.file_path is not None:
+            if self.right_file_start_line is None or self.right_file_end_line is None:
+                raise ValueError(
+                    "right_file_start_line and right_file_end_line are required when "
+                    "file_path is set (inline comment on a code line)."
+                )
+        return self
+
+
+class SetPullRequestThreadStatusInput(AzDoBaseInput):
+    """Input for updating the status of an existing pull request comment thread."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    thread_id: int = Field(
+        description="The thread ID to update.",
+        ge=1,
+    )
+    status: str = Field(
+        description=(
+            "New thread status. Valid values: 'active', 'fixed', 'wontFix', "
+            "'closed', 'byDesign', 'pending'."
+        ),
+    )
+
+    @field_validator("status", mode="after")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in _VALID_THREAD_STATUSES:
+            raise ValueError(
+                f"'status' must be one of {sorted(_VALID_THREAD_STATUSES)}; got: {v!r}"
+            )
+        return v
+
+
+class AddPullRequestCommentInput(AzDoBaseInput):
+    """Input for adding a reply comment to an existing pull request thread."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    thread_id: int = Field(
+        description="The thread ID to reply to.",
+        ge=1,
+    )
+    content: str = Field(
+        description="Text of the comment.",
+        min_length=1,
+    )
+    parent_comment_id: int = Field(
+        default=0,
+        description=(
+            "ID of the parent comment to reply to within the thread. "
+            "Use 0 (default) for a top-level reply on the thread."
+        ),
+        ge=0,
+    )
+
+
+class UpdatePullRequestCommentInput(AzDoBaseInput):
+    """Input for updating the content of an existing comment in a pull request thread."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    thread_id: int = Field(
+        description="The thread ID that owns the comment.",
+        ge=1,
+    )
+    comment_id: int = Field(
+        description="The comment ID to update.",
+        ge=1,
+    )
+    content: str = Field(
+        description="The updated text for the comment.",
         min_length=1,
     )
 
