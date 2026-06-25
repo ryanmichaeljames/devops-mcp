@@ -22,9 +22,11 @@ from devops_mcp.models import (
     AddPullRequestCommentInput,
     CreatePullRequestInput,
     CreatePullRequestThreadInput,
+    GetPullRequestChangesInput,
     GetPullRequestInput,
     GetPullRequestThreadInput,
     LinkWorkItemsToPullRequestInput,
+    ListPullRequestIterationsInput,
     ListPullRequestsInput,
     ListPullRequestThreadsInput,
     SetPullRequestThreadStatusInput,
@@ -893,4 +895,144 @@ async def devops_update_pull_request_comment(
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_update_pull_request_comment")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_list_pull_request_iterations",
+    annotations={
+        "title": "List Pull Request Iterations",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_list_pull_request_iterations(
+    params: ListPullRequestIterationsInput, ctx: Context
+) -> str:
+    """List the push iterations for an Azure DevOps pull request.
+
+    Each iteration represents a round of changes pushed to the source branch
+    after the PR was created. Useful for understanding the history of updates
+    and for targeting a specific iteration when calling
+    devops_get_pull_request_changes.
+
+    Returns a JSON object with keys:
+    - iterations: array of iteration objects, each containing id, description,
+      author, createdDate, sourceRefCommit, targetRefCommit, commonRefCommit,
+      and optionally commits when include_commits is True.
+    - count: total number of iterations returned.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/iterations",
+        )
+
+        query_params: dict = {"api-version": _THREAD_API_VERSION}
+        if params.include_commits:
+            query_params["includeCommits"] = "true"
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        iterations = data.get("value", [])
+        return finalize_response({
+            "iterations": iterations,
+            "count": data.get("count", len(iterations)),
+        })
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_list_pull_request_iterations")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_get_pull_request_changes",
+    annotations={
+        "title": "Get Pull Request Changes",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_get_pull_request_changes(
+    params: GetPullRequestChangesInput, ctx: Context
+) -> str:
+    """Get the file-change entries for a specific pull request iteration.
+
+    Returns the list of files added, edited, deleted, or renamed in the given
+    iteration. When compare_to is supplied, only the incremental changes between
+    that iteration and iteration_id are returned. Use top and skip to paginate
+    large change sets.
+
+    Returns a JSON object with keys:
+    - changes: array of change entry objects, each containing changeId,
+      item (with path and other metadata), and changeType
+      (e.g. 'edit', 'add', 'delete', 'rename').
+    - count: number of change entries in this response.
+    - nextSkip: present when more entries exist; pass as skip on the next call.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/iterations/{params.iteration_id}/changes",
+        )
+
+        query_params: dict = {"api-version": _THREAD_API_VERSION}
+        if params.compare_to is not None:
+            query_params["$compareTo"] = params.compare_to
+        if params.top is not None:
+            query_params["$top"] = params.top
+        if params.skip is not None:
+            query_params["$skip"] = params.skip
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        changes = data.get("changeEntries", [])
+        result: dict = {
+            "changes": changes,
+            "count": len(changes),
+        }
+        if "nextSkip" in data:
+            result["nextSkip"] = data["nextSkip"]
+        return finalize_response(result)
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_get_pull_request_changes")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

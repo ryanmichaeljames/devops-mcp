@@ -653,6 +653,63 @@ class UpdatePullRequestCommentInput(AzDoBaseInput):
     )
 
 
+class ListPullRequestIterationsInput(AzDoBaseInput):
+    """Input for listing push iterations on a pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    include_commits: bool = Field(
+        default=False,
+        description=(
+            "When True, includes the commits associated with each iteration "
+            "in the response."
+        ),
+    )
+
+
+class GetPullRequestChangesInput(AzDoBaseInput):
+    """Input for retrieving the file-change entries for a pull request iteration."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    iteration_id: int = Field(
+        description=(
+            "The iteration ID to retrieve changes for. "
+            "Obtain from devops_list_pull_request_iterations."
+        ),
+        ge=1,
+    )
+    compare_to: int | None = Field(
+        default=None,
+        description=(
+            "Iteration ID to diff against. When supplied, the response contains "
+            "only the incremental changes between compare_to and iteration_id. "
+            "When omitted, changes are relative to the PR target branch."
+        ),
+        ge=1,
+    )
+    top: int | None = Field(
+        default=None,
+        description="Maximum number of change entries to return (for pagination).",
+        ge=1,
+    )
+    skip: int | None = Field(
+        default=None,
+        description="Number of change entries to skip (for pagination).",
+        ge=0,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Work Items
 # ---------------------------------------------------------------------------
