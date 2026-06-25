@@ -184,8 +184,22 @@ def resolve_project(app_ctx: AppContext, project: str | None) -> str:
 
 
 def build_url(organization: str, project: str, path: str) -> str:
-    """Build an Azure DevOps REST API URL."""
-    return f"https://dev.azure.com/{organization}/{project}/_apis/{path}"
+    """Build a percent-encoded Azure DevOps REST API URL.
+
+    ``organization`` and ``project`` are single URL segments and are encoded
+    with ``safe=""`` so spaces and other special characters (common in project
+    names) become valid percent-encoded sequences.
+
+    ``path`` is a multi-segment route such as
+    ``git/repositories/{id}/pullrequests/{n}`` where ``/`` is an intentional
+    path separator, so it is encoded with ``safe="/"`` to preserve those
+    separators while still encoding any spaces or special characters that appear
+    within individual segments.
+    """
+    enc_org = quote(organization, safe="")
+    enc_project = quote(project, safe="")
+    enc_path = quote(path, safe="/")
+    return f"https://dev.azure.com/{enc_org}/{enc_project}/_apis/{enc_path}"
 
 
 def build_params(**kwargs) -> dict:

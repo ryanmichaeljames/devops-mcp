@@ -2,6 +2,7 @@
 
 import json
 import logging
+from urllib.parse import quote
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -283,7 +284,7 @@ async def devops_create_work_item(params: CreateWorkItemInput, ctx: Context) -> 
         if params.tags is not None:
             patch_ops.append({"op": "add", "path": "/fields/System.Tags", "value": params.tags})
         if params.parent_id is not None:
-            parent_url = f"https://dev.azure.com/{organization}/_apis/wit/workItems/{params.parent_id}"
+            parent_url = f"https://dev.azure.com/{quote(organization, safe='')}/_apis/wit/workItems/{params.parent_id}"
             patch_ops.append({
                 "op": "add",
                 "path": "/relations/-",
