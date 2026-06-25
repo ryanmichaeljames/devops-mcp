@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-25
+
 ### Added
 
+- **PR comment thread tools** — `devops_list_pull_request_threads`, `devops_get_pull_request_thread`, `devops_create_pull_request_thread` (general or inline on a code line via `threadContext`), `devops_set_pull_request_thread_status`, `devops_add_pull_request_comment`, and `devops_update_pull_request_comment`. Read tools are always available; the write tools require `AZDO_ALLOW_WRITE=true`. Thread status and inline line-field inputs are validated at construction time so errors surface before the API call.
+- **PR diff access tools** — `devops_list_pull_request_iterations` (PR push history) and `devops_get_pull_request_changes` (changed files per iteration, with optional `$compareTo`/`$top`/`$skip`). Both read-only.
+- **PyPI publishing pipeline** — a tag-driven (`v*.*.*`) GitHub Actions release workflow (gate → build → publish) that publishes to PyPI via OIDC trusted publishing, plus an import smoke test in CI and PyPI/Python/License badges in the README.
 - **Quality gates** — `ruff` linter and `pytest` + `pytest-asyncio` added as dev dependencies; CI workflow runs the full matrix across Python 3.10, 3.11, and 3.12.
 - **Resilience: `request_with_retry`** — automatic retry with idempotency gating. `429` (throttling) is retried on all HTTP methods because a throttled request was never executed by the server. `502`/`503`/`504` (gateway/server errors) are retried only on idempotent methods (`GET`, `PUT`, `DELETE`); non-idempotent writes (`POST`, `PATCH`) are returned immediately to avoid duplicate commits. Retry delays honour the `Retry-After` response header when present; exponential back-off is used otherwise, capped at 30 s.
 - **Resilience: `finalize_response`** — response-size cap (~5 MB). Payloads exceeding the cap are replaced with an actionable error message rather than flooding the MCP transport with multi-MB content.
@@ -29,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`build_url` URL-encoding** — organization, project, and path segments are now percent-encoded (`quote`) before interpolation. Azure DevOps project names may contain spaces and other characters needing encoding, which previously produced malformed URLs; raw interpolation was also a path-injection vector. Path separators are preserved while special characters within a segment are escaped.
 - `AZDO_LOG_LEVEL` documented default corrected to `INFO` (matches `server.py`; previously documented as `DEBUG`).
 - `devops_create_pull_request` now actually links work items to the pull request (see Changed above).
 
-[Unreleased]: https://github.com/ryanmichaeljames/devops-mcp/compare/HEAD...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ryanmichaeljames/devops-mcp/releases/tag/v1.0.0

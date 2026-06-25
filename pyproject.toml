@@ -1,6 +1,6 @@
 [project]
 name = "devops-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "An MCP server for interacting with Azure DevOps"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,7 +17,7 @@ keywords = [
     "llm",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
