@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**23 tools** across 4 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**31 tools** across 4 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -251,7 +251,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_get_repository` | default | Get details of a specific repository |
 | `devops_list_branches` | default | List branches in a repository |
 
-### Pull Requests (6 tools)
+### Pull Requests (14 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -261,6 +261,14 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_update_pull_request` | write | Update title, description, status, draft state, target branch, auto-complete, or completion options |
 | `devops_tag_pull_request` | write | Add labels/tags to a pull request |
 | `devops_link_work_items_to_pull_request` | write | Link Azure Boards work items to a pull request |
+| `devops_list_pull_request_threads` | default | List comment threads on a pull request |
+| `devops_get_pull_request_thread` | default | Get a single comment thread with its comments |
+| `devops_create_pull_request_thread` | write | Start a comment thread — general, or inline on a file/line via thread context |
+| `devops_set_pull_request_thread_status` | write | Set a thread's status (`active`, `fixed`, `wontFix`, `closed`, `byDesign`, `pending`) |
+| `devops_add_pull_request_comment` | write | Reply to an existing comment thread |
+| `devops_update_pull_request_comment` | write | Edit the text of an existing comment |
+| `devops_list_pull_request_iterations` | default | List a pull request's iterations (push history) |
+| `devops_get_pull_request_changes` | default | List changed files for a PR iteration (path + change type) |
 
 ### Work Items (7 tools)
 
@@ -278,6 +286,6 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## API Reference
 
-All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and work item read tools use **v7.1**. Pull request tools and work item write operations use **v7.2-preview**.
+All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, work item read tools, and the PR comment-thread and diff tools use **v7.1**. The remaining pull request tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).
