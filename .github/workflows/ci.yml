@@ -31,5 +31,8 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Import smoke test
+        run: uv run python -c "import devops_mcp.server"
+
       - name: Run tests
         run: uv run pytest

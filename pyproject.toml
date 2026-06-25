@@ -37,12 +37,13 @@ dependencies = [
 Homepage = "https://github.com/ryanmichaeljames/devops-mcp"
 Repository = "https://github.com/ryanmichaeljames/devops-mcp"
 Issues = "https://github.com/ryanmichaeljames/devops-mcp/issues"
+Changelog = "https://github.com/ryanmichaeljames/devops-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 devops-mcp = "devops_mcp.server:main"
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
