@@ -1,0 +1,80 @@
+[project]
+name = "devops-mcp"
+version = "1.0.0"
+description = "An MCP server for interacting with Azure DevOps"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Ryan James"},
+]
+license = "MIT"
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "azure-devops",
+    "devops",
+    "copilot",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "azure-identity>=1.16.0",
+    "httpx>=0.20.0,<1.0",
+    "mcp[cli]>=1.27.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ryanmichaeljames/devops-mcp"
+Repository = "https://github.com/ryanmichaeljames/devops-mcp"
+Issues = "https://github.com/ryanmichaeljames/devops-mcp/issues"
+Changelog = "https://github.com/ryanmichaeljames/devops-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+devops-mcp = "devops_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+    "build>=1.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.9.0",
+    "twine>=5.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as live integration tests (skip when env vars unset)",
+]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# I = isort-compatible import ordering (stdlib -> third-party -> local).
+# Scoped to rules that pass cleanly across the repo; broader rule sets
+# (E, W, F, etc.) are deferred to avoid a repo-wide src/ refactor.
+select = ["I"]
+
+[tool.ruff.lint.per-file-ignores]
+# src/ pre-dates this gate; import order there is deferred to avoid a
+# repo-wide refactor of production code.  The rule is enforced on all
+# new test code (tests/).
+"src/**" = ["I001"]
