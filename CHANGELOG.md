@@ -13,12 +13,50 @@ Initial release — an MCP server exposing Azure DevOps to LLMs over stdio (Fast
 
 #### Tools (31 across 4 domains)
 
-Write and delete tools are gated behind `AZDO_ALLOW_WRITE` / `AZDO_ALLOW_DELETE`.
+Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 
-- **Pipelines** — list pipelines, list pipeline runs, get pipeline run, get build, list run logs, get run log content (with `start_line`/`end_line` slicing), list build artifacts.
-- **Repositories** — list repositories, get repository, list branches.
-- **Pull requests** — get/list/create/update/tag pull requests and link work items; comment threads (`devops_list_pull_request_threads`, `devops_get_pull_request_thread`, `devops_create_pull_request_thread` — general or inline on a code line via `threadContext` — `devops_set_pull_request_thread_status`, `devops_add_pull_request_comment`, `devops_update_pull_request_comment`); diff access (`devops_list_pull_request_iterations`, `devops_get_pull_request_changes` with optional `$compareTo`/`$top`/`$skip`).
-- **Work items** — get/list/query (WIQL)/create/update work items and add/update work item comments.
+**Pipelines**
+
+- `devops_list_pipelines` — list pipelines defined in a project
+- `devops_list_pipeline_runs` — list runs for a specific pipeline
+- `devops_get_pipeline_run` — get details of a specific pipeline run
+- `devops_get_build` — get build details by `buildId`
+- `devops_list_run_logs` — list log metadata for a build
+- `devops_get_run_log_content` — get plain-text log content (with `start_line`/`end_line` slicing)
+- `devops_list_build_artifacts` — list artifacts produced by a build
+
+**Repositories**
+
+- `devops_list_repositories` — list Git repositories in a project
+- `devops_get_repository` — get details of a specific repository
+- `devops_list_branches` — list branches in a repository
+
+**Pull requests**
+
+- `devops_get_pull_request` — get details of a specific pull request
+- `devops_list_pull_requests` — list pull requests with optional filters
+- `devops_create_pull_request` _(write)_ — create a pull request, optionally linking work items
+- `devops_update_pull_request` _(write)_ — update title, description, status, draft state, target branch, or completion options
+- `devops_tag_pull_request` _(write)_ — add labels/tags to a pull request
+- `devops_link_work_items_to_pull_request` _(write)_ — link work items to a pull request
+- `devops_list_pull_request_threads` — list comment threads on a pull request
+- `devops_get_pull_request_thread` — get a single comment thread with its comments
+- `devops_create_pull_request_thread` _(write)_ — start a comment thread (general, or inline on a code line via `threadContext`)
+- `devops_set_pull_request_thread_status` _(write)_ — set a thread's status
+- `devops_add_pull_request_comment` _(write)_ — reply to an existing thread
+- `devops_update_pull_request_comment` _(write)_ — edit an existing comment
+- `devops_list_pull_request_iterations` — list a pull request's iterations (push history)
+- `devops_get_pull_request_changes` — list changed files for an iteration (with optional `$compareTo`/`$top`/`$skip`)
+
+**Work items**
+
+- `devops_get_work_item` — get a single work item by ID
+- `devops_list_work_items` — bulk-fetch up to 200 work items by ID
+- `devops_query_work_items` — query work items with WIQL, auto-fetching full details
+- `devops_create_work_item` _(write)_ — create a work item
+- `devops_update_work_item` _(write)_ — update fields on a work item
+- `devops_add_work_item_comment` _(write)_ — add a comment to a work item
+- `devops_update_work_item_comment` _(write)_ — update a work item comment
 
 #### Authentication
 
