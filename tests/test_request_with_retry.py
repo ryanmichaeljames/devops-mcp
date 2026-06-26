@@ -17,7 +17,6 @@ Covers:
 asyncio.sleep is patched to avoid real delays; call counts verify behaviour.
 """
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 

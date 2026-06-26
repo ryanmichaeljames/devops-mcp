@@ -206,6 +206,35 @@ class ListBranchesInput(AzDoBaseInput):
     )
 
 
+class GetFileContentInput(AzDoBaseInput):
+    """Input for retrieving the text content of a file from a Git repository."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    path: str = Field(
+        description=(
+            "Path to the file within the repository "
+            "(e.g., '/src/main.py' or 'README.md')."
+        ),
+        min_length=1,
+    )
+    branch: str | None = Field(
+        default=None,
+        description=(
+            "Branch name to read from (e.g., 'main'). "
+            "Omit to read from the repository's default branch."
+        ),
+    )
+    commit_id: str | None = Field(
+        default=None,
+        description=(
+            "Commit SHA to read from. "
+            "Takes precedence over branch when both are supplied."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pull Requests
 # ---------------------------------------------------------------------------
