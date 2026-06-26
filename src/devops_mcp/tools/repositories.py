@@ -18,7 +18,15 @@ from devops_mcp.client import (
     resolve_org,
     resolve_project,
 )
-from devops_mcp.models import GetFileContentInput, GetRepositoryInput, ListBranchesInput, ListRepositoriesInput
+from devops_mcp.models import (
+    GetCommitInput,
+    GetFileContentInput,
+    GetRepositoryInput,
+    ListBranchesInput,
+    ListCommitsInput,
+    ListRepositoriesInput,
+    ListRepositoryItemsInput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,3 +269,173 @@ async def devops_get_file_content(params: GetFileContentInput, ctx: Context) -> 
     except Exception as e:
         logger.exception("Unexpected error in devops_get_file_content")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_list_repository_items",
+    annotations={
+        "title": "List Repository Items",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_list_repository_items(params: ListRepositoryItemsInput, ctx: Context) -> str:
+    """List files and folders in an Azure DevOps Git repository.
+
+    Returns item paths, object types (blob/tree), and folder flags. Use
+    scope_path to browse a subfolder and recursion_level to control depth.
+    Use branch or commit_id to read a specific version; omit both to use
+    the repository's default branch. Pair with devops_get_file_content to
+    read file contents after discovering paths.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization, project,
+            f"git/repositories/{params.repository_id}/items",
+        )
+
+        query_params = build_params(
+            scopePath=params.scope_path,
+            recursionLevel=params.recursion_level,
+        )
+        if params.commit_id is not None:
+            query_params["versionDescriptor.version"] = params.commit_id
+            query_params["versionDescriptor.versionType"] = "commit"
+        elif params.branch is not None:
+            query_params["versionDescriptor.version"] = params.branch
+            query_params["versionDescriptor.versionType"] = "branch"
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        items = data.get("value", data) if isinstance(data, dict) else data
+        return finalize_response({"items": items, "count": len(items)})
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_list_repository_items")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_list_commits",
+    annotations={
+        "title": "List Commits",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_list_commits(params: ListCommitsInput, ctx: Context) -> str:
+    """List commits in an Azure DevOps Git repository.
+
+    Returns commit IDs, authors, dates, and commit messages. Filter by branch,
+    author, or date range. Use devops_get_commit to retrieve the full detail
+    and file changes for a specific commit.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization, project,
+            f"git/repositories/{params.repository_id}/commits",
+        )
+
+        query_params = build_params(**{"$top": params.top})
+        if params.branch is not None:
+            query_params["searchCriteria.itemVersion.version"] = params.branch
+            query_params["searchCriteria.itemVersion.versionType"] = "branch"
+        if params.author is not None:
+            query_params["searchCriteria.author"] = params.author
+        if params.from_date is not None:
+            query_params["searchCriteria.fromDate"] = params.from_date
+        if params.to_date is not None:
+            query_params["searchCriteria.toDate"] = params.to_date
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=query_params,
+        )
+        response.raise_for_status()
+        data = response.json()
+        commits = data.get("value", data) if isinstance(data, dict) else data
+        return finalize_response({"commits": commits, "count": len(commits)})
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_list_commits")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_get_commit",
+    annotations={
+        "title": "Get Commit",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_get_commit(params: GetCommitInput, ctx: Context) -> str:
+    """Get details of a specific commit from an Azure DevOps Git repository.
+
+    Returns the commit ID, author, committer, date, message, and parents.
+    Set change_count to include file changes (paths and change types) in the
+    response.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization, project,
+            f"git/repositories/{params.repository_id}/commits/{params.commit_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params=build_params(changeCount=params.change_count),
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_get_commit")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+

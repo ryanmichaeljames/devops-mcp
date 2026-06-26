@@ -23,7 +23,9 @@ from devops_mcp.models import (
     AddWorkItemCommentInput,
     CreateWorkItemInput,
     GetWorkItemInput,
+    ListWorkItemFieldsInput,
     ListWorkItemsInput,
+    ListWorkItemTypesInput,
     QueryWorkItemsInput,
     UpdateWorkItemCommentInput,
     UpdateWorkItemInput,
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 _WIT_API_VERSION = "7.2-preview.3"
 _WIT_COMMENTS_API_VERSION = "7.0-preview.3"
+_WIT_SCHEMA_API_VERSION = "7.1"
 
 
 @mcp.tool(
@@ -492,4 +495,101 @@ async def devops_update_work_item_comment(params: UpdateWorkItemCommentInput, ct
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_update_work_item_comment")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_list_work_item_types",
+    annotations={
+        "title": "List Work Item Types",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_list_work_item_types(params: ListWorkItemTypesInput, ctx: Context) -> str:
+    """List work item types defined in an Azure DevOps project.
+
+    Returns type names, reference names, descriptions, colors, and icons.
+    Use the name with devops_create_work_item (work_item_type field) and
+    devops_list_work_item_fields to discover valid fields per type.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, "wit/workitemtypes")
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params={"api-version": _WIT_SCHEMA_API_VERSION},
+        )
+        response.raise_for_status()
+        data = response.json()
+        types = data.get("value", [])
+        return finalize_response({"work_item_types": types, "count": len(types)})
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_list_work_item_types")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@mcp.tool(
+    name="devops_list_work_item_fields",
+    annotations={
+        "title": "List Work Item Fields",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_list_work_item_fields(params: ListWorkItemFieldsInput, ctx: Context) -> str:
+    """List work item field definitions for an Azure DevOps project.
+
+    When work_item_type is provided, returns only the fields applicable to
+    that type (e.g., 'Bug', 'Task'). When omitted, returns all fields defined
+    in the process. Use reference names with devops_create_work_item's
+    additional_fields and with WIQL queries.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+
+        if params.work_item_type is not None:
+            url = build_url(organization, project, f"wit/workitemtypes/{params.work_item_type}/fields")
+        else:
+            url = build_url(organization, project, "wit/fields")
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params={"api-version": _WIT_SCHEMA_API_VERSION},
+        )
+        response.raise_for_status()
+        data = response.json()
+        fields = data.get("value", [])
+        return finalize_response({"fields": fields, "count": len(fields)})
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_list_work_item_fields")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

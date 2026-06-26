@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**32 tools** across 4 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**40 tools** across 5 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -231,7 +231,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `write` | Registered only when `AZDO_ALLOW_WRITE=true`. |
 | `delete` | Registered only when `AZDO_ALLOW_DELETE=true`. |
 
-### Pipelines (7 tools)
+### Pipelines (8 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -242,15 +242,19 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_run_logs` | default | List log metadata for a build by `buildId` |
 | `devops_get_run_log_content` | default | Get plain-text content of a specific log; use `start_line`/`end_line` to slice large logs |
 | `devops_list_build_artifacts` | default | List artifacts produced by a build |
+| `devops_run_pipeline` | write | Trigger a new pipeline run; optionally override branch, template parameters, or queue-time variables |
 
-### Repositories (4 tools)
+### Repositories (7 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
 | `devops_list_repositories` | default | List Git repositories in a project |
 | `devops_get_repository` | default | Get details of a specific repository |
 | `devops_list_branches` | default | List branches in a repository |
-| `devops_get_file_content` | default | Get the text content of a file; supports optional `branch` or `commit_id` version; binary files return an error |
+| `devops_get_file_content` | default | Get the text content of a file; supports optional `branch` or `commit_id`; binary files return an error |
+| `devops_list_repository_items` | default | Browse files and folders; control depth with `recursion_level` (`oneLevel`, `full`, etc.) |
+| `devops_list_commits` | default | List commits with optional filters for branch, author, and date range |
+| `devops_get_commit` | default | Get details of a specific commit; set `change_count` to include changed file paths |
 
 ### Pull Requests (14 tools)
 
@@ -271,7 +275,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_pull_request_iterations` | default | List a pull request's iterations (push history) |
 | `devops_get_pull_request_changes` | default | List changed files for a PR iteration (path + change type) |
 
-### Work Items (7 tools)
+### Work Items (9 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -282,11 +286,20 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_update_work_item` | write | Update fields on an existing work item |
 | `devops_add_work_item_comment` | write | Add a comment to a work item |
 | `devops_update_work_item_comment` | write | Update an existing work item comment |
+| `devops_list_work_item_types` | default | List work item types (e.g., Bug, Task, Epic) and their reference names |
+| `devops_list_work_item_fields` | default | List field definitions for a work item type or all fields in the process |
+
+### Discovery (2 tools)
+
+| Tool | Gate | Description |
+|---|---|---|
+| `devops_list_projects` | default | List projects in an organization; use when project name is unknown |
+| `devops_list_teams` | default | List teams in a project; supports `mine=true` to filter to the authenticated user's teams |
 
 ---
 
 ## API Reference
 
-All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, work item read tools, and the PR comment-thread and diff tools use **v7.1**. The remaining pull request tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**.
+All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).

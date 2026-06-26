@@ -235,6 +235,95 @@ class GetFileContentInput(AzDoBaseInput):
     )
 
 
+_VALID_RECURSION_LEVELS = {"none", "oneLevel", "full", "oneLevelPlusNestedEmptyFolders"}
+
+
+class ListRepositoryItemsInput(AzDoBaseInput):
+    """Input for listing items (files and folders) in a Git repository."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    scope_path: str | None = Field(
+        default=None,
+        description=(
+            "Folder path to list (e.g., '/' for root, '/src'). "
+            "Defaults to repository root."
+        ),
+    )
+    recursion_level: str = Field(
+        default="oneLevel",
+        description=(
+            "Traversal depth: 'none' (item only), 'oneLevel' (immediate children), "
+            "'full' (all descendants), 'oneLevelPlusNestedEmptyFolders'."
+        ),
+    )
+    branch: str | None = Field(
+        default=None,
+        description="Branch name to read from (e.g., 'main'). Defaults to repository default branch.",
+    )
+    commit_id: str | None = Field(
+        default=None,
+        description="Commit SHA to read from. Takes precedence over branch when both are supplied.",
+    )
+
+    @field_validator("recursion_level", mode="after")
+    @classmethod
+    def validate_recursion_level(cls, v: str) -> str:
+        if v not in _VALID_RECURSION_LEVELS:
+            raise ValueError(
+                f"'recursion_level' must be one of {sorted(_VALID_RECURSION_LEVELS)}; got: {v!r}"
+            )
+        return v
+
+
+class ListCommitsInput(AzDoBaseInput):
+    """Input for listing commits in a Git repository."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    branch: str | None = Field(
+        default=None,
+        description="Branch name to list commits from (e.g., 'main'). Defaults to repository default branch.",
+    )
+    author: str | None = Field(
+        default=None,
+        description="Filter by author display name or email address.",
+    )
+    from_date: str | None = Field(
+        default=None,
+        description="Return commits at or after this date (ISO 8601, e.g., '2024-01-01T00:00:00Z').",
+    )
+    to_date: str | None = Field(
+        default=None,
+        description="Return commits at or before this date (ISO 8601).",
+    )
+    top: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum number of commits to return (max 1000).",
+    )
+
+
+class GetCommitInput(AzDoBaseInput):
+    """Input for retrieving a single commit from a Git repository."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    commit_id: str = Field(
+        description="The full or abbreviated commit SHA.",
+        min_length=4,
+    )
+    change_count: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of file changes to include in the response (0 = none, omit for default).",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pull Requests
 # ---------------------------------------------------------------------------
@@ -980,4 +1069,111 @@ class UpdateWorkItemCommentInput(AzDoBaseInput):
     text: str = Field(
         description="The updated text of the comment. Supports markdown.",
         min_length=1,
+    )
+
+
+class ListWorkItemTypesInput(AzDoBaseInput):
+    """Input for listing work item types defined in an Azure DevOps project."""
+
+
+class ListWorkItemFieldsInput(AzDoBaseInput):
+    """Input for listing work item field definitions in an Azure DevOps project."""
+
+    work_item_type: str | None = Field(
+        default=None,
+        description=(
+            "Work item type name to list fields for (e.g., 'Bug', 'Task', 'User Story'). "
+            "Omit to list all fields defined in the process."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pipelines (write)
+# ---------------------------------------------------------------------------
+
+
+class RunPipelineInput(AzDoBaseInput):
+    """Input for triggering a new run of an Azure DevOps pipeline."""
+
+    pipeline_id: int = Field(
+        description="The pipeline ID.",
+        ge=1,
+    )
+    branch: str | None = Field(
+        default=None,
+        description=(
+            "Branch to run against (e.g., 'main' or 'refs/heads/main'). "
+            "Omit to use the pipeline's configured default branch."
+        ),
+    )
+    template_parameters: dict | None = Field(
+        default=None,
+        description=(
+            "Template parameter overrides as a dict mapping parameter name to value string "
+            "(e.g., {'environment': 'staging'})."
+        ),
+    )
+    variables: dict | None = Field(
+        default=None,
+        description=(
+            "Pipeline variable overrides as a dict mapping variable name to value string "
+            "(e.g., {'MY_VAR': 'my_value'}). Variables must be marked as settable at queue time."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Discovery (org-level)
+# ---------------------------------------------------------------------------
+
+
+class ListProjectsInput(BaseModel):
+    """Input for listing projects in an Azure DevOps organization."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    organization: str | None = Field(
+        default=None,
+        description=(
+            "Azure DevOps organization name (e.g., 'myorg'). "
+            "If omitted, falls back to the AZDO_ORGANIZATION environment variable."
+        ),
+    )
+    state_filter: str | None = Field(
+        default=None,
+        description=(
+            "Filter by project state: 'new', 'wellFormed', 'deleting', 'createPending', 'all'. "
+            "Omit to return well-formed projects only."
+        ),
+    )
+    top: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum number of projects to return (max 1000).",
+    )
+    continuation_token: str | None = Field(
+        default=None,
+        description="Pagination token from a previous response.",
+    )
+
+
+class ListTeamsInput(AzDoBaseInput):
+    """Input for listing teams in an Azure DevOps project."""
+
+    mine: bool = Field(
+        default=False,
+        description="When true, return only teams the authenticated user belongs to.",
+    )
+    top: int = Field(
+        default=100,
+        ge=1,
+        le=100,
+        description="Maximum number of teams to return (max 100).",
+    )
+    skip: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of teams to skip (for pagination).",
     )
