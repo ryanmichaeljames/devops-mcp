@@ -16,7 +16,6 @@ import pytest
 from azure.core.exceptions import ClientAuthenticationError
 
 from devops_mcp.client import (
-    _AZDO_SCOPE,
     _DEFAULT_AUTH_TIMEOUT_SECONDS,
     AppContext,
     _get_auth_timeout_seconds,

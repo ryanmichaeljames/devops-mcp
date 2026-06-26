@@ -69,9 +69,8 @@ target-version = "py310"
 
 [tool.ruff.lint]
 # I = isort-compatible import ordering (stdlib -> third-party -> local).
-# Scoped to rules that pass cleanly across the repo; broader rule sets
-# (E, W, F, etc.) are deferred to avoid a repo-wide src/ refactor.
-select = ["I"]
+# F = Pyflakes: undefined names, unused imports/variables, f-string issues.
+select = ["I", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 # src/ pre-dates this gate; import order there is deferred to avoid a

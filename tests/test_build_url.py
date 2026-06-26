@@ -8,7 +8,6 @@ Covers:
 - Normal identifiers (no special chars) pass through unchanged.
 """
 
-import pytest
 
 from devops_mcp.client import build_url
 

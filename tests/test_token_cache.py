@@ -11,7 +11,6 @@ Covers:
   plain InteractiveBrowserCredential (no wrapper installed, no sidecar written).
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -209,7 +208,6 @@ def test_one_shot_wrapper_no_recursion(tmp_path, monkeypatch):
     - _save_auth_record is called exactly once (not zero — it wasn't swallowed).
     - The wrapper removes itself (credential.get_token is the original after the call).
     """
-    from devops_mcp.client import _build_interactive_credential
 
     # Provide a realistic serialised record so authenticate() is called.
     monkeypatch.delenv("AZDO_EPHEMERAL_TOKEN", raising=False)
@@ -302,8 +300,6 @@ def test_build_interactive_credential_cache_off_no_wrapper(monkeypatch, tmp_path
     with patch("devops_mcp.client.InteractiveBrowserCredential") as MockCred:
         mock_instance = MagicMock()
         MockCred.return_value = mock_instance
-        # Capture the bound original so we can check it is unchanged.
-        original_get_token = mock_instance.get_token
 
         cred = _build_interactive_credential()
 
