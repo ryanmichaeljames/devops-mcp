@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**31 tools** across 4 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**32 tools** across 4 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -243,13 +243,14 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_get_run_log_content` | default | Get plain-text content of a specific log; use `start_line`/`end_line` to slice large logs |
 | `devops_list_build_artifacts` | default | List artifacts produced by a build |
 
-### Repositories (3 tools)
+### Repositories (4 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
 | `devops_list_repositories` | default | List Git repositories in a project |
 | `devops_get_repository` | default | Get details of a specific repository |
 | `devops_list_branches` | default | List branches in a repository |
+| `devops_get_file_content` | default | Get the text content of a file; supports optional `branch` or `commit_id` version; binary files return an error |
 
 ### Pull Requests (14 tools)
 
