@@ -202,6 +202,13 @@ def build_url(organization: str, project: str, path: str) -> str:
     return f"https://dev.azure.com/{enc_org}/{enc_project}/_apis/{enc_path}"
 
 
+def build_org_url(organization: str, path: str) -> str:
+    """Build a percent-encoded Azure DevOps REST API URL at organization level (no project segment)."""
+    enc_org = quote(organization, safe="")
+    enc_path = quote(path, safe="/")
+    return f"https://dev.azure.com/{enc_org}/_apis/{enc_path}"
+
+
 def build_params(**kwargs) -> dict:
     """Build a params dict with the API version, filtering out None values."""
     params = {"api-version": API_VERSION}

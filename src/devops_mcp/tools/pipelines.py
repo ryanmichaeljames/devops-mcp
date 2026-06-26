@@ -5,7 +5,7 @@ import logging
 import httpx
 from mcp.server.fastmcp import Context
 
-from devops_mcp._app import mcp
+from devops_mcp._app import mcp, write_tool
 from devops_mcp.client import (
     AppContext,
     build_headers,
@@ -26,6 +26,7 @@ from devops_mcp.models import (
     ListPipelineRunsInput,
     ListPipelinesInput,
     ListRunLogsInput,
+    RunPipelineInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -409,4 +410,64 @@ async def devops_list_build_artifacts(params: ListBuildArtifactsInput, ctx: Cont
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_list_build_artifacts")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_run_pipeline",
+    annotations={
+        "title": "Run Pipeline",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def devops_run_pipeline(params: RunPipelineInput, ctx: Context) -> str:
+    """Trigger a new run of an Azure DevOps pipeline.
+
+    Queues a pipeline run and returns the run ID, state, and web URL.
+    Optionally override the target branch, template parameters, or
+    queue-time variables. Requires AZDO_ALLOW_WRITE=true.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"pipelines/{params.pipeline_id}/runs")
+
+        body: dict = {}
+
+        if params.branch is not None:
+            ref = params.branch if params.branch.startswith("refs/") else f"refs/heads/{params.branch}"
+            body["resources"] = {"repositories": {"self": {"refName": ref}}}
+
+        if params.template_parameters is not None:
+            body["templateParameters"] = params.template_parameters
+
+        if params.variables is not None:
+            body["variables"] = {
+                k: {"value": str(v), "isSecret": False}
+                for k, v in params.variables.items()
+            }
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params=build_params(),
+            json=body,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_run_pipeline")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
