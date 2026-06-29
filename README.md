@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**40 tools** across 5 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**43 tools** across 5 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -256,7 +256,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_commits` | default | List commits with optional filters for branch, author, and date range |
 | `devops_get_commit` | default | Get details of a specific commit; set `change_count` to include changed file paths |
 
-### Pull Requests (14 tools)
+### Pull Requests (17 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -264,6 +264,9 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_pull_requests` | default | List pull requests with optional filters (status, branch, creator, reviewer, labels) |
 | `devops_create_pull_request` | write | Create a new pull request, optionally linking work items |
 | `devops_update_pull_request` | write | Update title, description, status, draft state, target branch, auto-complete, or completion options |
+| `devops_complete_pull_request` | write | Complete (merge) a pull request — irreversible; confirm merge strategy and source-branch deletion first to avoid unwanted merge type or history loss |
+| `devops_abandon_pull_request` | write | Abandon a pull request without merging |
+| `devops_vote_pull_request` | write | Cast a reviewer vote (10 approve, 5 approve with suggestions, 0 reset, -5 waiting, -10 reject) |
 | `devops_tag_pull_request` | write | Add labels/tags to a pull request |
 | `devops_link_work_items_to_pull_request` | write | Link Azure Boards work items to a pull request |
 | `devops_list_pull_request_threads` | default | List comment threads on a pull request |

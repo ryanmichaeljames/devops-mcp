@@ -1,6 +1,7 @@
 """Pydantic input models for all Azure DevOps MCP tools."""
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -1086,6 +1087,81 @@ class ListWorkItemFieldsInput(AzDoBaseInput):
             "Omit to list all fields defined in the process."
         ),
     )
+
+
+class CompletePullRequestInput(AzDoBaseInput):
+    """Input for completing (merging) an Azure DevOps pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID to complete.",
+        ge=1,
+    )
+    merge_strategy: Literal["noFastForward", "squash", "rebase", "rebaseMerge"] | None = Field(
+        default=None,
+        description=(
+            "Merge strategy to use on completion: 'noFastForward' (merge commit, preserves full "
+            "history), 'squash' (collapses all commits into one — loses individual commit history), "
+            "'rebase' (replays commits linearly — rewrites commit SHAs), or 'rebaseMerge' "
+            "(rebase then merge commit). If omitted, the repository's default strategy is used. "
+            "Confirm with the user before omitting — the default may not be what they expect."
+        ),
+    )
+    delete_source_branch: bool | None = Field(
+        default=None,
+        description="Delete the source branch after the PR is completed. Confirm with the user before setting.",
+    )
+    merge_commit_message: str | None = Field(
+        default=None,
+        description="Custom commit message for the merge commit.",
+    )
+    transition_work_items: bool | None = Field(
+        default=None,
+        description="Transition linked work items to the next logical state on completion.",
+    )
+
+
+class AbandonPullRequestInput(AzDoBaseInput):
+    """Input for abandoning an Azure DevOps pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID to abandon.",
+        ge=1,
+    )
+
+
+class VotePullRequestInput(AzDoBaseInput):
+    """Input for casting a reviewer vote on an Azure DevOps pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    reviewer_id: str = Field(
+        description=(
+            "Identity ID (UUID) of the reviewer casting the vote. "
+            "Must be a valid GUID (format: 8-4-4-4-12 hex)."
+        ),
+    )
+    vote: Literal[-10, -5, 0, 5, 10] = Field(
+        description=(
+            "Vote value: 10 = Approved, 5 = Approved with suggestions, "
+            "0 = No vote (reset), -5 = Waiting for author, -10 = Rejected."
+        ),
+    )
+
+    @field_validator("reviewer_id", mode="after")
+    @classmethod
+    def validate_reviewer_id(cls, v: str) -> str:
+        return _validate_guid(v, "reviewer_id")
 
 
 # ---------------------------------------------------------------------------

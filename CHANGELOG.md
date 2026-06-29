@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Pull request lifecycle tools
+
+Registered only when `AZDO_ALLOW_WRITE=true`.
+
+- `devops_complete_pull_request` _(write)_ — complete (merge) a pull request via the GET-then-PATCH flow; supports `merge_strategy`, `delete_source_branch`, `merge_commit_message`, and `transition_work_items`. The tool description warns that completion is irreversible and that merge settings must be confirmed first to avoid an unwanted merge type or history loss.
+- `devops_abandon_pull_request` _(write)_ — abandon a pull request without merging
+- `devops_vote_pull_request` _(write)_ — cast a reviewer vote (-10 reject … 10 approve)
+
 ## [1.0.0] - 2026-06-26
 
 Initial release — an MCP server exposing Azure DevOps to LLMs over stdio (FastMCP).

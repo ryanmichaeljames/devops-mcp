@@ -19,7 +19,9 @@ from devops_mcp.client import (
     resolve_project,
 )
 from devops_mcp.models import (
+    AbandonPullRequestInput,
     AddPullRequestCommentInput,
+    CompletePullRequestInput,
     CreatePullRequestInput,
     CreatePullRequestThreadInput,
     GetPullRequestChangesInput,
@@ -33,6 +35,7 @@ from devops_mcp.models import (
     TagPullRequestInput,
     UpdatePullRequestCommentInput,
     UpdatePullRequestInput,
+    VotePullRequestInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -1035,4 +1038,203 @@ async def devops_get_pull_request_changes(
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_get_pull_request_changes")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_complete_pull_request",
+    annotations={
+        "title": "Complete Pull Request",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def devops_complete_pull_request(params: CompletePullRequestInput, ctx: Context) -> str:
+    """Complete (merge) an Azure DevOps pull request into its target branch.
+
+    WARNING: Completing a PR is irreversible — it merges code into the target branch and
+    cannot be undone. Before calling this tool, confirm the completion settings with the
+    user, especially merge_strategy and delete_source_branch. The wrong merge strategy can
+    cause an unwanted merge type or loss of commit history (e.g. squash collapses all
+    commits into one; rebase rewrites commit SHAs). If merge_strategy is omitted, the
+    repository's default strategy is applied, which may not match the user's intent — prefer
+    setting it explicitly after confirming.
+
+    Performs a GET to read the current lastMergeSourceCommit (required by the Azure DevOps
+    API), then PATCHes status=completed. completionOptions keys are included only for
+    params the caller explicitly supplied; omitted params fall back to the repository
+    default. Returns the completed pull request object.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}",
+        )
+
+        # Step 1: GET the PR to obtain lastMergeSourceCommit (required by the ADO complete API)
+        get_response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params={"api-version": _PR_API_VERSION},
+        )
+        get_response.raise_for_status()
+        pr_data = get_response.json()
+
+        last_merge_source_commit = pr_data.get("lastMergeSourceCommit")
+        if not last_merge_source_commit:
+            return finalize_response({
+                "error": True,
+                "message": (
+                    f"Pull request {params.pull_request_id} does not have a lastMergeSourceCommit. "
+                    "The PR may not be in a mergeable state (e.g. no commits pushed, or merge conflicts present)."
+                ),
+            })
+
+        # Step 2: PATCH status=completed with lastMergeSourceCommit + optional completionOptions
+        body: dict = {
+            "status": "completed",
+            "lastMergeSourceCommit": last_merge_source_commit,
+        }
+
+        completion_options: dict = {}
+        if params.merge_strategy is not None:
+            completion_options["mergeStrategy"] = params.merge_strategy
+        if params.delete_source_branch is not None:
+            completion_options["deleteSourceBranch"] = params.delete_source_branch
+        if params.merge_commit_message is not None:
+            completion_options["mergeCommitMessage"] = params.merge_commit_message
+        if params.transition_work_items is not None:
+            completion_options["transitionWorkItems"] = params.transition_work_items
+        if completion_options:
+            body["completionOptions"] = completion_options
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _PR_API_VERSION},
+            json=body,
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_complete_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_abandon_pull_request",
+    annotations={
+        "title": "Abandon Pull Request",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_abandon_pull_request(params: AbandonPullRequestInput, ctx: Context) -> str:
+    """Abandon an Azure DevOps pull request.
+
+    Sets the PR status to 'abandoned', closing it without merging. The source
+    branch and commits are preserved; no code is merged. An abandoned PR can
+    be reactivated via devops_update_pull_request (status=active). Returns the
+    updated pull request object.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _PR_API_VERSION},
+            json={"status": "abandoned"},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_abandon_pull_request")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_vote_pull_request",
+    annotations={
+        "title": "Vote on Pull Request",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_vote_pull_request(params: VotePullRequestInput, ctx: Context) -> str:
+    """Cast or update a reviewer vote on an Azure DevOps pull request.
+
+    Vote values: 10 = Approved, 5 = Approved with suggestions, 0 = No vote
+    (reset/abstain), -5 = Waiting for author, -10 = Rejected.
+
+    Uses a PUT to the reviewers sub-resource, which adds the reviewer if not
+    already present or updates their existing vote. Returns the reviewer object
+    including id, vote, displayName, and uniqueName.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(
+            organization,
+            project,
+            f"git/repositories/{params.repository_id}/pullrequests/{params.pull_request_id}/reviewers/{params.reviewer_id}",
+        )
+
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "PUT",
+            url,
+            headers=await build_headers(app_ctx, include_content_type=True),
+            params={"api-version": _PR_API_VERSION},
+            json={"vote": params.vote, "id": params.reviewer_id},
+        )
+        response.raise_for_status()
+        return finalize_response(response.json())
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_vote_pull_request")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
