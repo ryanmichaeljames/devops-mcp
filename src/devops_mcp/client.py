@@ -209,6 +209,19 @@ def build_org_url(organization: str, path: str) -> str:
     return f"https://dev.azure.com/{enc_org}/_apis/{enc_path}"
 
 
+def build_advsec_url(organization: str, project: str, path: str) -> str:
+    """Build a percent-encoded Advanced Security REST URL on advsec.dev.azure.com.
+
+    Same encoding contract as build_url (org/project encoded with safe="",
+    multi-segment path with safe="/"), but targets the advsec host that serves
+    the GHAzDo alerts API instead of dev.azure.com.
+    """
+    enc_org = quote(organization, safe="")
+    enc_project = quote(project, safe="")
+    enc_path = quote(path, safe="/")
+    return f"https://advsec.dev.azure.com/{enc_org}/{enc_project}/_apis/{enc_path}"
+
+
 def build_params(**kwargs) -> dict:
     """Build a params dict with the API version, filtering out None values."""
     params = {"api-version": API_VERSION}

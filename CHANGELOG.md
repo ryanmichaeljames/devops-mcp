@@ -17,6 +17,14 @@ Registered only when `AZDO_ALLOW_WRITE=true`.
 - `devops_abandon_pull_request` _(write)_ — abandon a pull request without merging
 - `devops_vote_pull_request` _(write)_ — cast a reviewer vote (-10 reject … 10 approve)
 
+#### Advanced Security alert tools
+
+GitHub Advanced Security for Azure DevOps (GHAzDo) alerts, on the `advsec.dev.azure.com` host (api-version `7.2-preview.1`). Requires Advanced Security enabled on the repository.
+
+- `devops_list_advanced_security_alerts` — list secret, dependency, and code-scanning alerts for a repository, filterable by `alert_type`, state, severity, rule, tool, and branch
+- `devops_get_advanced_security_alert` — get a single alert by ID (`expand=validationFingerprint` can expose secrets in cleartext; off by default)
+- `devops_update_advanced_security_alert` _(write)_ — dismiss, re-activate, or mark an alert fixed; dismissing requires a dismissal reason
+
 ## [1.0.0] - 2026-06-26
 
 Initial release — an MCP server exposing Azure DevOps to LLMs over stdio (FastMCP).

@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**43 tools** across 5 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**46 tools** across 6 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -299,10 +299,20 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_projects` | default | List projects in an organization; use when project name is unknown |
 | `devops_list_teams` | default | List teams in a project; supports `mine=true` to filter to the authenticated user's teams |
 
+### Advanced Security (3 tools)
+
+Requires GitHub Advanced Security for Azure DevOps (GHAzDo) to be enabled on the repository.
+
+| Tool | Gate | Description |
+|---|---|---|
+| `devops_list_advanced_security_alerts` | default | List security alerts for a repository; filter by `alert_type` (`secret`, `dependency`, `code`), state, severity, rule, tool, or branch |
+| `devops_get_advanced_security_alert` | default | Get a single alert by ID. `expand=validationFingerprint` can return secret values in cleartext — leave unset unless needed |
+| `devops_update_advanced_security_alert` | write | Dismiss, re-activate, or mark an alert fixed; dismissing requires a dismissal reason |
+
 ---
 
 ## API Reference
 
-All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**.
+All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**. Advanced Security alert tools use **v7.2-preview.1** on the `advsec.dev.azure.com` host.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).
