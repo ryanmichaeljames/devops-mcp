@@ -1,6 +1,6 @@
 [project]
 name = "devops-mcp"
-version = "1.0.0"
+version = "1.1.0"
 description = "An MCP server for interacting with Azure DevOps"
 readme = "README.md"
 requires-python = ">=3.10"

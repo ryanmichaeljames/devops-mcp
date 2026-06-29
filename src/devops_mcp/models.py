@@ -1,6 +1,7 @@
 """Pydantic input models for all Azure DevOps MCP tools."""
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -1088,6 +1089,81 @@ class ListWorkItemFieldsInput(AzDoBaseInput):
     )
 
 
+class CompletePullRequestInput(AzDoBaseInput):
+    """Input for completing (merging) an Azure DevOps pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID to complete.",
+        ge=1,
+    )
+    merge_strategy: Literal["noFastForward", "squash", "rebase", "rebaseMerge"] | None = Field(
+        default=None,
+        description=(
+            "Merge strategy to use on completion: 'noFastForward' (merge commit, preserves full "
+            "history), 'squash' (collapses all commits into one — loses individual commit history), "
+            "'rebase' (replays commits linearly — rewrites commit SHAs), or 'rebaseMerge' "
+            "(rebase then merge commit). If omitted, the repository's default strategy is used. "
+            "Confirm with the user before omitting — the default may not be what they expect."
+        ),
+    )
+    delete_source_branch: bool | None = Field(
+        default=None,
+        description="Delete the source branch after the PR is completed. Confirm with the user before setting.",
+    )
+    merge_commit_message: str | None = Field(
+        default=None,
+        description="Custom commit message for the merge commit.",
+    )
+    transition_work_items: bool | None = Field(
+        default=None,
+        description="Transition linked work items to the next logical state on completion.",
+    )
+
+
+class AbandonPullRequestInput(AzDoBaseInput):
+    """Input for abandoning an Azure DevOps pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID to abandon.",
+        ge=1,
+    )
+
+
+class VotePullRequestInput(AzDoBaseInput):
+    """Input for casting a reviewer vote on an Azure DevOps pull request."""
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    pull_request_id: int = Field(
+        description="The pull request ID.",
+        ge=1,
+    )
+    reviewer_id: str = Field(
+        description=(
+            "Identity ID (UUID) of the reviewer casting the vote. "
+            "Must be a valid GUID (format: 8-4-4-4-12 hex)."
+        ),
+    )
+    vote: Literal[-10, -5, 0, 5, 10] = Field(
+        description=(
+            "Vote value: 10 = Approved, 5 = Approved with suggestions, "
+            "0 = No vote (reset), -5 = Waiting for author, -10 = Rejected."
+        ),
+    )
+
+    @field_validator("reviewer_id", mode="after")
+    @classmethod
+    def validate_reviewer_id(cls, v: str) -> str:
+        return _validate_guid(v, "reviewer_id")
+
+
 # ---------------------------------------------------------------------------
 # Pipelines (write)
 # ---------------------------------------------------------------------------
@@ -1177,3 +1253,151 @@ class ListTeamsInput(AzDoBaseInput):
         ge=0,
         description="Number of teams to skip (for pagination).",
     )
+
+
+# ---------------------------------------------------------------------------
+# Advanced Security (GHAzDo)
+# ---------------------------------------------------------------------------
+
+AdvSecAlertType = Literal["secret", "dependency", "code"]
+AdvSecState = Literal["active", "dismissed", "fixed"]
+AdvSecDismissalReason = Literal[
+    "fixed", "acceptedRisk", "falsePositive",
+    "agreedToGuidance", "toolUpgrade", "notDistributed",
+]
+
+
+class ListAdvancedSecurityAlertsInput(AzDoBaseInput):
+    """Input for listing GitHub Advanced Security (GHAzDo) alerts for a repository."""
+
+    repository: str = Field(
+        description=(
+            "Repository name or ID to list alerts for. Accepts either the repository "
+            "name (e.g., 'MyRepo') or its GUID."
+        ),
+    )
+    alert_type: AdvSecAlertType | None = Field(
+        default=None,
+        description=(
+            "Filter by alert type: 'secret' (secret scanning), 'dependency' "
+            "(dependency/SCA scanning), or 'code' (code scanning / CodeQL). "
+            "Omit to return all alert types."
+        ),
+    )
+    states: list[Literal["active", "dismissed", "fixed", "autoDismissed"]] | None = Field(
+        default=None,
+        description=(
+            "Filter by alert state(s). Valid values: 'active', 'dismissed', 'fixed', "
+            "'autoDismissed'. Omit to return alerts in all states."
+        ),
+    )
+    severities: list[Literal["low", "medium", "high", "critical", "note", "warning", "error", "undefined"]] | None = Field(
+        default=None,
+        description=(
+            "Filter by severity level(s). Valid values: 'low', 'medium', 'high', "
+            "'critical', 'note', 'warning', 'error', 'undefined'."
+        ),
+    )
+    rule_id: str | None = Field(
+        default=None,
+        description="Filter by the rule ID that generated the alert (e.g., a CodeQL query ID).",
+    )
+    tool_name: str | None = Field(
+        default=None,
+        description="Filter by the scanning tool name that reported the alert (e.g., 'CodeQL').",
+    )
+    ref: str | None = Field(
+        default=None,
+        description=(
+            "Filter alerts by git ref (e.g., 'refs/heads/main'). "
+            "Not applicable to secret alerts."
+        ),
+    )
+    only_default_branch: bool | None = Field(
+        default=None,
+        description=(
+            "When True, return only alerts on the repository's default branch. "
+            "Not applicable to secret alerts. Server default is True when unset."
+        ),
+    )
+    order_by: Literal["id", "firstSeen", "lastSeen", "fixedOn", "severity"] | None = Field(
+        default=None,
+        description=(
+            "Sort order for results. Valid values: 'id' (default), 'firstSeen', "
+            "'lastSeen', 'fixedOn', 'severity'."
+        ),
+    )
+    top: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum number of alerts to return (max 1000). Defaults to 100.",
+    )
+    continuation_token: str | None = Field(
+        default=None,
+        description="Pagination token from a previous response (x-ms-continuationtoken header).",
+    )
+
+
+class GetAdvancedSecurityAlertInput(AzDoBaseInput):
+    """Input for retrieving a single GitHub Advanced Security alert by ID."""
+
+    repository: str = Field(
+        description="Repository name or ID. Accepts either the repository name or its GUID.",
+    )
+    alert_id: int = Field(
+        ge=1,
+        description="The numeric alert ID to retrieve.",
+    )
+    ref: str | None = Field(
+        default=None,
+        description="Git ref to scope the alert to (e.g., 'refs/heads/main').",
+    )
+    expand: Literal["none", "validationFingerprint"] | None = Field(
+        default=None,
+        description=(
+            "Expand options. 'validationFingerprint' includes the raw secret value in cleartext "
+            "— use with extreme caution and only when absolutely necessary. "
+            "Defaults to unset (server default 'none')."
+        ),
+    )
+
+
+class UpdateAdvancedSecurityAlertInput(AzDoBaseInput):
+    """Input for updating the state of a GitHub Advanced Security alert (dismiss or re-activate)."""
+
+    repository: str = Field(
+        description="Repository name or ID. Accepts either the repository name or its GUID.",
+    )
+    alert_id: int = Field(
+        ge=1,
+        description="The numeric alert ID to update.",
+    )
+    state: AdvSecState = Field(
+        description=(
+            "New state for the alert: 'active' (re-activate a dismissed alert), "
+            "'dismissed' (dismiss — requires dismissed_reason), or 'fixed' (mark resolved)."
+        ),
+    )
+    dismissed_reason: AdvSecDismissalReason | None = Field(
+        default=None,
+        description=(
+            "Reason for dismissal. Required when state='dismissed'. "
+            "Valid values: 'fixed', 'acceptedRisk', 'falsePositive', "
+            "'agreedToGuidance', 'toolUpgrade', 'notDistributed'."
+        ),
+    )
+    dismissed_comment: str | None = Field(
+        default=None,
+        description="Optional comment explaining the dismissal decision.",
+    )
+
+    @model_validator(mode="after")
+    def _require_reason_when_dismissing(self) -> "UpdateAdvancedSecurityAlertInput":
+        if self.state == "dismissed" and self.dismissed_reason is None:
+            raise ValueError(
+                "dismissed_reason is required when state='dismissed' "
+                "(one of: fixed, acceptedRisk, falsePositive, agreedToGuidance, "
+                "toolUpgrade, notDistributed)."
+            )
+        return self
