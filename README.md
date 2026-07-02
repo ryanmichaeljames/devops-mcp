@@ -149,7 +149,7 @@ Register two server entries, each with its own profile and (recommended) matchin
 These behaviors are built in and require no configuration:
 
 - **Automatic retries** — requests that receive `429` (throttling) or transient gateway errors (`502`, `503`, `504`) are retried automatically with back-off and `Retry-After` header honoring. **Non-idempotent writes (POST, PATCH) are not retried on `5xx`** — a gateway error on a write may arrive after the server has already committed the operation; only `429` (which guarantees the request was rejected before processing) is safe to retry on all methods.
-- **Response size cap** — responses larger than **5 MB** are replaced with an error asking the agent to narrow the query. For large pipeline logs use `devops_get_run_log_content`'s `start_line`/`end_line` parameters to slice the content at the API level.
+- **Response size cap** — responses larger than **5 MB** are replaced with an error asking the agent to narrow the query. For large pipeline logs, prefer `devops_get_run_timeline` to triage without pulling log text at all; `devops_get_run_log_content` defaults to a bounded 500-line page (`max_lines`, `tail`, `start_line`/`end_line`) with a paging envelope, and `devops_search_run_log` returns only matching lines.
 - **Auth timeout** — credential acquisition is bounded by `AZDO_AUTH_TIMEOUT_SECONDS` (default 30 s). A slow or hung auth call releases the per-scope lock so subsequent callers are not serialized indefinitely.
 
 ---
@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**46 tools** across 6 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**48 tools** across 6 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -231,7 +231,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `write` | Registered only when `AZDO_ALLOW_WRITE=true`. |
 | `delete` | Registered only when `AZDO_ALLOW_DELETE=true`. |
 
-### Pipelines (8 tools)
+### Pipelines (10 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -240,7 +240,9 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_get_pipeline_run` | default | Get details of a specific pipeline run |
 | `devops_get_build` | default | Get build details by `buildId` (resolves a build URL to pipeline info) |
 | `devops_list_run_logs` | default | List log metadata for a build by `buildId` |
-| `devops_get_run_log_content` | default | Get plain-text content of a specific log; use `start_line`/`end_line` to slice large logs |
+| `devops_get_run_timeline` | default | Compact, filtered build timeline with inline failure messages — the recommended first stop for "why did this build fail," often needing zero log fetches |
+| `devops_get_run_log_content` | default | Get plain-text content of a specific log; bounded to `max_lines` (default 500) by default, with `start_line`/`end_line`/`tail` windowing and a paging envelope (`has_more`/`next_start_line`) |
+| `devops_search_run_log` | default | Search (grep) a log in-process and return only matching lines plus context — non-matching lines never reach the model |
 | `devops_list_build_artifacts` | default | List artifacts produced by a build |
 | `devops_run_pipeline` | write | Trigger a new pipeline run; optionally override branch, template parameters, or queue-time variables |
 
@@ -316,3 +318,11 @@ Requires GitHub Advanced Security for Azure DevOps (GHAzDo) to be enabled on the
 All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**. Advanced Security alert tools use **v7.2-preview.1** on the `advsec.dev.azure.com` host.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).
+
+### Efficient log retrieval
+
+Pipeline logs can be huge and expensive to read. Work from cheapest to most expensive:
+
+1. **`devops_get_run_timeline`** — start here for "why did it fail." Returns a compact, failure-filtered timeline with inline error messages, often answering the question with **zero log fetches**.
+2. **`devops_search_run_log`** — grep a specific log in-process; only matching lines (plus context) are returned, so non-matching content never reaches the model.
+3. **`devops_get_run_log_content`** — read log text directly. Bounded to `max_lines` (default 500) with `start_line`/`end_line`/`tail` windowing and a paging envelope (`has_more`, `next_start_line`) to page through large logs or grab just the `tail`.

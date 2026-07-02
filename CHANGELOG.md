@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-02
+
+### Added
+
+#### Token-efficient pipeline log retrieval
+
+- `devops_get_run_timeline` — compact, failure-filtered build timeline surfacing inline error messages from the timeline `issues[]`; the recommended first stop for "why did this build fail," often answering with zero log fetches
+- `devops_search_run_log` — grep a build log in-process and return only matching lines plus surrounding context, so non-matching log text never reaches the model
+
+### Changed
+
+- **BREAKING:** `devops_get_run_log_content` now returns at most `max_lines` (default 500) lines when no range is given, instead of the entire log. Added `tail` (fetch the last N lines) and a paging envelope (`total_line_count`, `start_line`, `end_line`, `returned_line_count`, `has_more`, `next_start_line`) so large logs are paged deliberately rather than flooding the model. Existing `start_line`/`end_line` slicing is unchanged; confirmed empirically against api-version 7.1 that `endLine` is inclusive and an out-of-range `start_line` returns an empty body (not an error).
+
 ## [1.1.0] - 2026-06-29
 
 ### Added
@@ -24,6 +37,27 @@ GitHub Advanced Security for Azure DevOps (GHAzDo) alerts, on the `advsec.dev.az
 - `devops_list_advanced_security_alerts` — list secret, dependency, and code-scanning alerts for a repository, filterable by `alert_type`, state, severity, rule, tool, and branch
 - `devops_get_advanced_security_alert` — get a single alert by ID (`expand=validationFingerprint` can expose secrets in cleartext; off by default)
 - `devops_update_advanced_security_alert` _(write)_ — dismiss, re-activate, or mark an alert fixed; dismissing requires a dismissal reason
+
+#### Repository browsing
+
+- `devops_get_file_content` — get the text content of a file; supports optional `branch` or `commit_id`; binary files return an error
+- `devops_list_repository_items` — browse files and folders; control depth with `recursion_level` (`oneLevel`, `full`, etc.)
+- `devops_list_commits` — list commits with optional filters for branch, author, and date range
+- `devops_get_commit` — get details of a specific commit; set `change_count` to include changed file paths
+
+#### Pipeline runs
+
+- `devops_run_pipeline` _(write)_ — trigger a new pipeline run; optionally override branch, template parameters, or queue-time variables
+
+#### Discovery tools
+
+- `devops_list_projects` — list projects in an organization; use when the project name is unknown
+- `devops_list_teams` — list teams in a project; supports `mine=true` to filter to the authenticated user's teams
+
+#### Work item schema tools
+
+- `devops_list_work_item_types` — list work item types (e.g., Bug, Task, Epic) and their reference names
+- `devops_list_work_item_fields` — list field definitions for a work item type or all fields in the process
 
 ## [1.0.0] - 2026-06-26
 
@@ -103,4 +137,6 @@ Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 - **Quality gates** — `ruff` linting and `pytest` (with `pytest-asyncio`); CI runs the matrix across Python 3.10, 3.11, and 3.12 with an import smoke test.
 - **PyPI publishing** — a tag-driven (`v*.*.*`) GitHub Actions workflow (gate → build → publish) using OIDC trusted publishing.
 
+[1.2.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ryanmichaeljames/devops-mcp/releases/tag/v1.0.0
