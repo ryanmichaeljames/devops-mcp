@@ -123,8 +123,60 @@ class GetBuildInput(AzDoBaseInput):
     )
 
 
+class GetRunTimelineInput(AzDoBaseInput):
+    """Input for retrieving a compact, filtered timeline of an Azure DevOps build/run.
+
+    The timeline usually answers "what failed and why" with little or no log
+    text, since Timeline records carry inline issue messages (issues[].message)
+    for failed steps. Prefer this over pulling log content directly.
+    """
+
+    build_id: int = Field(
+        description="The build/run ID (run_id and build_id are the same value).",
+        ge=1,
+    )
+    failed_only: bool = Field(
+        default=True,
+        description=(
+            "When True (default), only return records that failed, were "
+            "canceled, succeeded with issues, or have errorCount > 0. "
+            "Set False to return all timeline records."
+        ),
+    )
+    include_issues: bool = Field(
+        default=True,
+        description=(
+            "Include each record's inline issues[] (error/warning messages). "
+            "These frequently contain the actual failure text, avoiding a "
+            "separate log fetch."
+        ),
+    )
+    include_log_line_counts: bool = Field(
+        default=True,
+        description=(
+            "Join each record's log line count from a supplemental call to "
+            "devops_list_run_logs, so the model can size a tail window "
+            "without an extra round-trip. Disable to skip that extra call."
+        ),
+    )
+    record_types: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional case-insensitive filter on the record 'type' field "
+            "(e.g., ['Task']). Type is an opaque string that varies between "
+            "classic and YAML pipelines — omit to keep all types."
+        ),
+    )
+
+
 class GetRunLogContentInput(AzDoBaseInput):
-    """Input for retrieving the plain-text content of a specific log."""
+    """Input for retrieving the plain-text content of a specific log.
+
+    BEHAVIOR CHANGE: a call with no start_line/end_line/tail now returns at
+    most max_lines lines (default 500) instead of the entire log. Use the
+    returned has_more/next_start_line fields to iterate, or tail to read the
+    end of the log directly.
+    """
 
     build_id: int = Field(
         description="The build/run ID (run_id and build_id are the same value).",
@@ -143,6 +195,84 @@ class GetRunLogContentInput(AzDoBaseInput):
         default=None,
         description="End line for partial log retrieval (inclusive).",
         ge=1,
+    )
+    max_lines: int = Field(
+        default=500,
+        description=(
+            "Page size cap. With start_line set and no end_line, returns "
+            "start_line..start_line+max_lines-1. With neither start_line nor "
+            "end_line set, returns lines 1..max_lines (head). Ignored when "
+            "both start_line and end_line are given."
+        ),
+        ge=1,
+        le=5000,
+    )
+    tail: int | None = Field(
+        default=None,
+        description=(
+            "Return the last N lines of the log (most errors are at the "
+            "end). Mutually exclusive with start_line/end_line. Requires the "
+            "log's total line count to be available (fetched automatically); "
+            "fails if the log is still in progress and has no line count yet."
+        ),
+        ge=1,
+        le=5000,
+    )
+
+    @model_validator(mode="after")
+    def validate_tail_exclusivity(self) -> "GetRunLogContentInput":
+        if self.tail is not None and (self.start_line is not None or self.end_line is not None):
+            raise ValueError(
+                "'tail' is mutually exclusive with 'start_line'/'end_line' — "
+                "use tail alone to read the end of the log, or start_line/"
+                "end_line to window elsewhere."
+            )
+        return self
+
+
+class SearchRunLogInput(AzDoBaseInput):
+    """Input for searching (grepping) a specific log from an Azure DevOps run.
+
+    Downloads the full log text inside the MCP server process and returns
+    only matching lines plus surrounding context — non-matching lines never
+    reach the model, so a large log can cost only a few dozen lines of tokens.
+    """
+
+    build_id: int = Field(
+        description="The build/run ID (run_id and build_id are the same value).",
+        ge=1,
+    )
+    log_id: int = Field(
+        description="The log ID to search (obtain from devops_list_run_logs).",
+        ge=1,
+    )
+    pattern: str = Field(
+        description="The search string (literal substring by default; see is_regex).",
+        min_length=1,
+        max_length=200,
+    )
+    is_regex: bool = Field(
+        default=False,
+        description=(
+            "When True, treat pattern as a regular expression. Defaults to "
+            "False (literal substring match), which is safer and faster."
+        ),
+    )
+    ignore_case: bool = Field(
+        default=False,
+        description="Case-insensitive matching.",
+    )
+    context: int = Field(
+        default=2,
+        description="Number of lines of context to include before/after each match.",
+        ge=0,
+        le=10,
+    )
+    max_matches: int = Field(
+        default=50,
+        description="Maximum number of matches to return (caps payload; sets 'truncated').",
+        ge=1,
+        le=200,
     )
 
 

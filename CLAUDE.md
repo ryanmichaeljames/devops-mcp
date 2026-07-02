@@ -19,7 +19,7 @@ src/devops_mcp/
 ├── client.py          # Shared HTTP client, auth credential factory, lifespan context manager
 ├── models.py          # All Pydantic input models
 └── tools/
-    ├── pipelines.py   # 7 tools: list/get pipelines, runs, builds, logs, artifacts
+    ├── pipelines.py   # 10 tools: list/get pipelines, runs, builds, logs, timeline, log search, artifacts
     ├── repositories.py# 3 tools: list repos, get repo, list branches
     ├── pull_requests.py # 6 tools: get/list/create/update/tag PRs, link work items
     └── work_items.py  # 7 tools: get/list/query/create/update work items, comments
