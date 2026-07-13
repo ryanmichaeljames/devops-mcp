@@ -34,7 +34,9 @@ from devops_mcp.models import (
 logger = logging.getLogger(__name__)
 
 _WIT_API_VERSION = "7.2-preview.3"
-_WIT_COMMENTS_API_VERSION = "7.0-preview.3"
+# 7.1-preview.4 is the earliest version that honours the `format` query parameter
+# (markdown | html). Older versions silently store every comment as HTML.
+_WIT_COMMENTS_API_VERSION = "7.1-preview.4"
 _WIT_SCHEMA_API_VERSION = "7.1"
 
 
@@ -416,9 +418,10 @@ async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> 
 async def devops_add_work_item_comment(params: AddWorkItemCommentInput, ctx: Context) -> str:
     """Add a comment to an Azure DevOps work item.
 
-    Posts a new comment to the specified work item's discussion thread.
-    The comment text supports markdown formatting. Returns the created comment
-    object including its commentId, version, createdBy, and createdDate.
+    Posts a new comment to the specified work item's discussion thread. The text
+    is stored as markdown by default; pass format='html' to store raw HTML.
+    Returns the created comment object including its commentId, version,
+    createdBy, and createdDate.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
@@ -431,7 +434,7 @@ async def devops_add_work_item_comment(params: AddWorkItemCommentInput, ctx: Con
             "POST",
             url,
             headers=await build_headers(app_ctx, include_content_type=True),
-            params={"api-version": _WIT_COMMENTS_API_VERSION},
+            params={"api-version": _WIT_COMMENTS_API_VERSION, "format": params.format},
             json={"text": params.text},
         )
         response.raise_for_status()
@@ -461,7 +464,8 @@ async def devops_add_work_item_comment(params: AddWorkItemCommentInput, ctx: Con
 async def devops_update_work_item_comment(params: UpdateWorkItemCommentInput, ctx: Context) -> str:
     """Update an existing comment on an Azure DevOps work item.
 
-    Replaces the text of the specified comment. Use devops_add_work_item_comment
+    Replaces the text of the specified comment. The text is stored as markdown by
+    default; pass format='html' to store raw HTML. Use devops_add_work_item_comment
     to get the commentId from the original add response, or retrieve existing
     comment IDs via the Azure DevOps work item comments API. Returns the updated
     comment object including the new version number.
@@ -481,7 +485,7 @@ async def devops_update_work_item_comment(params: UpdateWorkItemCommentInput, ct
             "PATCH",
             url,
             headers=await build_headers(app_ctx, include_content_type=True),
-            params={"api-version": _WIT_COMMENTS_API_VERSION},
+            params={"api-version": _WIT_COMMENTS_API_VERSION, "format": params.format},
             json={"text": params.text},
         )
         response.raise_for_status()

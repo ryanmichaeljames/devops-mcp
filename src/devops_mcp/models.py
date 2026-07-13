@@ -1173,6 +1173,14 @@ class UpdateWorkItemInput(AzDoBaseInput):
     )
 
 
+WorkItemCommentFormat = Literal["markdown", "html"]
+
+_COMMENT_FORMAT_DESCRIPTION = (
+    "Format the comment text is authored in. Defaults to 'markdown'; pass 'html' "
+    "only when the text is raw HTML."
+)
+
+
 class AddWorkItemCommentInput(AzDoBaseInput):
     """Input for adding a comment to a work item."""
 
@@ -1181,8 +1189,12 @@ class AddWorkItemCommentInput(AzDoBaseInput):
         ge=1,
     )
     text: str = Field(
-        description="Text of the comment. Supports markdown.",
+        description="Text of the comment. Interpreted according to 'format' (markdown by default).",
         min_length=1,
+    )
+    format: WorkItemCommentFormat = Field(
+        default="markdown",
+        description=_COMMENT_FORMAT_DESCRIPTION,
     )
 
 
@@ -1198,8 +1210,15 @@ class UpdateWorkItemCommentInput(AzDoBaseInput):
         ge=1,
     )
     text: str = Field(
-        description="The updated text of the comment. Supports markdown.",
+        description=(
+            "The updated text of the comment. Interpreted according to 'format' "
+            "(markdown by default)."
+        ),
         min_length=1,
+    )
+    format: WorkItemCommentFormat = Field(
+        default="markdown",
+        description=_COMMENT_FORMAT_DESCRIPTION,
     )
 
 
