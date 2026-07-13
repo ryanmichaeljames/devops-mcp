@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `devops_add_work_item_comment` and `devops_update_work_item_comment` now store comments as **markdown** instead of HTML. The comments endpoints only honour the `format` query parameter from api-version `7.1-preview.4` onward; the tools were pinned to `7.0-preview.3` and never sent `format`, so Azure DevOps fell back to HTML and markdown text was rendered as literal characters. Both tools now target `7.1-preview.4` and send `format=markdown` by default. A new `format` input (`markdown` | `html`) allows opting into HTML explicitly.
+- `devops_create_work_item` and `devops_update_work_item` now store large-text fields (`System.Description`, `System.History`, acceptance criteria, repro steps, system info) as **markdown** instead of HTML. Azure DevOps defaults every large-text field to HTML unless the JSON Patch document also carries a `/multilineFieldsFormat/{field}` op; the tools never sent one, so markdown text was rendered as literal characters. A new `format` input (`markdown` | `html`) allows opting into HTML explicitly. Note that Azure DevOps cannot convert a large-text field back to HTML once it has been saved as markdown.
+- - `devops_add_work_item_comment` and `devops_update_work_item_comment` now store comments as **markdown** instead of HTML. The comments endpoints only honour the `format` query parameter from api-version `7.1-preview.4` onward; the tools were pinned to `7.0-preview.3` and never sent `format`, so Azure DevOps fell back to HTML and markdown text was rendered as literal characters. Both tools now target `7.1-preview.4` and send `format=markdown` by default. A new `format` input (`markdown` | `html`) allows opting into HTML explicitly.
 
 ## [1.2.0] - 2026-07-02
 

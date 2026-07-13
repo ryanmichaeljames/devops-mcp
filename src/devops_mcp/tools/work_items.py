@@ -39,6 +39,42 @@ _WIT_API_VERSION = "7.2-preview.3"
 _WIT_COMMENTS_API_VERSION = "7.1-preview.4"
 _WIT_SCHEMA_API_VERSION = "7.1"
 
+# Large-text ("HTML") fields whose format can be switched to markdown with a
+# /multilineFieldsFormat patch op. Sending that op for a field of any other type
+# is rejected by Azure DevOps, so only these known field refs are converted;
+# custom large-text fields set via additional_fields stay HTML.
+_MULTILINE_TEXT_FIELDS = frozenset(
+    {
+        "system.description",
+        "system.history",
+        "microsoft.vsts.common.acceptancecriteria",
+        "microsoft.vsts.tcm.reprosteps",
+        "microsoft.vsts.tcm.systeminfo",
+    }
+)
+
+
+def _append_markdown_format_ops(patch_ops: list[dict], text_format: str) -> None:
+    """Mark every large-text field written by *patch_ops* as markdown.
+
+    Azure DevOps defaults large-text fields to HTML; markdown requires an
+    explicit /multilineFieldsFormat op alongside the /fields op. Conversion is
+    one-way — a field saved as markdown cannot be switched back to HTML.
+    """
+    if text_format != "markdown":
+        return
+
+    written = [
+        op["path"].removeprefix("/fields/")
+        for op in patch_ops
+        if op.get("path", "").startswith("/fields/")
+    ]
+    patch_ops.extend(
+        {"op": "add", "path": f"/multilineFieldsFormat/{ref}", "value": "Markdown"}
+        for ref in written
+        if ref.lower() in _MULTILINE_TEXT_FIELDS
+    )
+
 
 @mcp.tool(
     name="devops_get_work_item",
@@ -264,6 +300,10 @@ async def devops_create_work_item(params: CreateWorkItemInput, ctx: Context) -> 
     Common work item types: Bug, Task, User Story, Feature, Epic, Issue,
     Test Case. The exact set of valid types depends on the project process
     template (Agile, Scrum, CMMI, or custom).
+
+    Large-text fields (description, acceptance criteria, repro steps) are saved
+    as markdown by default; pass format='html' to save them as raw HTML instead.
+    Azure DevOps cannot convert such a field back to HTML once it is markdown.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
@@ -302,6 +342,8 @@ async def devops_create_work_item(params: CreateWorkItemInput, ctx: Context) -> 
         if params.additional_fields:
             for field_name, field_value in params.additional_fields.items():
                 patch_ops.append({"op": "add", "path": f"/fields/{field_name}", "value": field_value})
+
+        _append_markdown_format_ops(patch_ops, params.format)
 
         response = await request_with_retry(
             app_ctx.http_client,
@@ -347,6 +389,12 @@ async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> 
 
     Use additional_fields for any field not exposed as a named parameter
     (e.g., story points, remaining work, custom fields).
+
+    Large-text fields (description, acceptance criteria, repro steps, the
+    discussion comment) are saved as markdown by default; pass format='html' to
+    save them as raw HTML instead. Azure DevOps cannot convert such a field back
+    to HTML once it is markdown, so updating an HTML description with the default
+    format permanently switches that field to markdown.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
@@ -379,6 +427,8 @@ async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> 
 
         if not patch_ops:
             return finalize_response({"error": True, "message": "No fields to update were provided."})
+
+        _append_markdown_format_ops(patch_ops, params.format)
 
         response = await request_with_retry(
             app_ctx.http_client,

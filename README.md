@@ -287,8 +287,8 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_get_work_item` | default | Get a single work item by ID |
 | `devops_list_work_items` | default | Bulk-fetch up to 200 work items by ID |
 | `devops_query_work_items` | default | Query work items with WIQL, auto-fetching full details |
-| `devops_create_work_item` | write | Create a new work item |
-| `devops_update_work_item` | write | Update fields on an existing work item |
+| `devops_create_work_item` | write | Create a new work item (large-text fields saved as markdown by default; `format=html` to opt out) |
+| `devops_update_work_item` | write | Update fields on an existing work item (large-text fields saved as markdown by default; `format=html` to opt out) |
 | `devops_add_work_item_comment` | write | Add a comment to a work item (markdown by default; `format=html` to opt out) |
 | `devops_update_work_item_comment` | write | Update an existing work item comment (markdown by default; `format=html` to opt out) |
 | `devops_list_work_item_types` | default | List work item types (e.g., Bug, Task, Epic) and their reference names |

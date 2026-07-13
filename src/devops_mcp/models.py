@@ -35,6 +35,25 @@ def _validate_guid_list(values: list[str], field: str) -> list[str]:
     return values
 
 
+# ---------------------------------------------------------------------------
+# Work item text formats
+# ---------------------------------------------------------------------------
+
+WorkItemTextFormat = Literal["markdown", "html"]
+
+_COMMENT_FORMAT_DESCRIPTION = (
+    "Format the comment text is authored in. Defaults to 'markdown'; pass 'html' "
+    "only when the text is raw HTML."
+)
+
+_FIELD_FORMAT_DESCRIPTION = (
+    "Format the large-text fields (description, repro steps, acceptance criteria, "
+    "discussion comment) are authored in. Defaults to 'markdown'; pass 'html' only "
+    "when those values are raw HTML. Note: Azure DevOps cannot convert a large-text "
+    "field back to HTML once it has been saved as markdown."
+)
+
+
 class AzDoBaseInput(BaseModel):
     """Shared organization and project selection for all Azure DevOps tools."""
 
@@ -1107,6 +1126,10 @@ class CreateWorkItemInput(AzDoBaseInput):
             "'Custom.MyField': 'value'})."
         ),
     )
+    format: WorkItemTextFormat = Field(
+        default="markdown",
+        description=_FIELD_FORMAT_DESCRIPTION,
+    )
 
 
 class UpdateWorkItemInput(AzDoBaseInput):
@@ -1171,14 +1194,10 @@ class UpdateWorkItemInput(AzDoBaseInput):
             "(e.g., {'Microsoft.VSTS.Scheduling.StoryPoints': 8})."
         ),
     )
-
-
-WorkItemCommentFormat = Literal["markdown", "html"]
-
-_COMMENT_FORMAT_DESCRIPTION = (
-    "Format the comment text is authored in. Defaults to 'markdown'; pass 'html' "
-    "only when the text is raw HTML."
-)
+    format: WorkItemTextFormat = Field(
+        default="markdown",
+        description=_FIELD_FORMAT_DESCRIPTION,
+    )
 
 
 class AddWorkItemCommentInput(AzDoBaseInput):
@@ -1192,7 +1211,7 @@ class AddWorkItemCommentInput(AzDoBaseInput):
         description="Text of the comment. Interpreted according to 'format' (markdown by default).",
         min_length=1,
     )
-    format: WorkItemCommentFormat = Field(
+    format: WorkItemTextFormat = Field(
         default="markdown",
         description=_COMMENT_FORMAT_DESCRIPTION,
     )
@@ -1216,7 +1235,7 @@ class UpdateWorkItemCommentInput(AzDoBaseInput):
         ),
         min_length=1,
     )
-    format: WorkItemCommentFormat = Field(
+    format: WorkItemTextFormat = Field(
         default="markdown",
         description=_COMMENT_FORMAT_DESCRIPTION,
     )
