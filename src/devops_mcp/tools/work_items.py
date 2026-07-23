@@ -29,6 +29,7 @@ from devops_mcp.models import (
     QueryWorkItemsInput,
     UpdateWorkItemCommentInput,
     UpdateWorkItemInput,
+    UpdateWorkItemTagsInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -418,7 +419,14 @@ async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> 
         if params.priority is not None:
             patch_ops.append({"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": params.priority})
         if params.tags is not None:
-            patch_ops.append({"op": "add", "path": "/fields/System.Tags", "value": params.tags})
+            # Azure DevOps treats `op: add` on System.Tags as a union merge with
+            # the tags already stored, not a replace — verified empirically
+            # against the live API. `op: replace` genuinely replaces the field
+            # (and, with an empty string value, clears it), including when the
+            # field is currently absent (no prior tags), so it is safe for all
+            # three cases this parameter's docstring promises: absent -> set,
+            # non-empty -> different value, non-empty -> clear.
+            patch_ops.append({"op": "replace", "path": "/fields/System.Tags", "value": params.tags})
         if params.comment is not None:
             patch_ops.append({"op": "add", "path": "/fields/System.History", "value": params.comment})
         if params.additional_fields:
@@ -452,6 +460,170 @@ async def devops_update_work_item(params: UpdateWorkItemInput, ctx: Context) -> 
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_update_work_item")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@write_tool(
+    name="devops_update_work_item_tags",
+    annotations={
+        "title": "Update Work Item Tags",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_update_work_item_tags(params: UpdateWorkItemTagsInput, ctx: Context) -> str:
+    """Add and/or remove tags on an Azure DevOps work item.
+
+    Azure DevOps stores tags as a single semicolon-separated string
+    (System.Tags) with no native add/remove operation, so this tool reads the
+    work item's current tags, computes the new tag set, and PATCHes the result
+    back with optimistic concurrency (a JSON Patch /rev test op). If a tag
+    appears in both 'add' and 'remove', removal wins. Matching is
+    case-insensitive; the casing of tags that remain is preserved, and newly
+    added tags keep the casing you supplied. If the computed tag set is
+    unchanged, no PATCH is issued and 'changed' is returned as false.
+
+    The returned 'tags' list reflects what Azure DevOps actually persisted
+    (read back from the PATCH response), not a local prediction — because the
+    server re-sorts System.Tags alphabetically on every write, the returned
+    order will generally NOT match the order tags were added/supplied in.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"wit/workitems/{params.work_item_id}")
+
+        add_raw = params.add or []
+        remove_raw = params.remove or []
+
+        if not add_raw and not remove_raw:
+            return finalize_response({"error": True, "message": "No tags to add or remove were provided."})
+
+        for tag in [*add_raw, *remove_raw]:
+            stripped = tag.strip()
+            if not stripped:
+                return finalize_response({
+                    "error": True,
+                    "message": f"Tags must not be empty or whitespace-only; got: {tag!r}",
+                })
+            if ";" in stripped:
+                return finalize_response({
+                    "error": True,
+                    "message": f"Tags must not contain a semicolon (';'); got: {tag!r}",
+                })
+
+        get_response = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            url,
+            headers=await build_headers(app_ctx),
+            params={"fields": "System.Tags", "api-version": _WIT_API_VERSION},
+        )
+        get_response.raise_for_status()
+        data = get_response.json()
+        rev = data.get("rev")
+        current_tags_raw = data.get("fields", {}).get("System.Tags", "")
+
+        current_tags = [t.strip() for t in current_tags_raw.split(";") if t.strip()]
+
+        # De-duplicate the caller's add list case-insensitively, keeping first occurrence.
+        add_dedup: list[str] = []
+        seen_add_lower: set[str] = set()
+        for tag in add_raw:
+            stripped = tag.strip()
+            lowered = stripped.lower()
+            if lowered not in seen_add_lower:
+                seen_add_lower.add(lowered)
+                add_dedup.append(stripped)
+
+        remove_lower = {t.strip().lower() for t in remove_raw}
+
+        # Removal wins over add when the same tag appears in both.
+        add_dedup = [t for t in add_dedup if t.lower() not in remove_lower]
+
+        current_lower_set = {t.lower() for t in current_tags}
+
+        # Predicted new tag set, used only to build the PATCH value and to
+        # detect a no-op (see below). The response's actual 'added'/'removed'
+        # are derived later from what the server really persisted, since a
+        # local prediction of order/casing is not reliable (see docstring).
+        new_tags: list[str] = []
+        for tag in current_tags:
+            if tag.lower() in remove_lower:
+                continue
+            new_tags.append(tag)
+
+        for tag in add_dedup:
+            if tag.lower() not in current_lower_set:
+                new_tags.append(tag)
+
+        if new_tags == current_tags:
+            return finalize_response({
+                "work_item_id": params.work_item_id,
+                "changed": False,
+                "tags": current_tags,
+                "added": [],
+                "removed": [],
+                "count": len(current_tags),
+            })
+
+        patch_ops: list[dict] = []
+        if rev is not None:
+            patch_ops.append({"op": "test", "path": "/rev", "value": rev})
+        # `op: replace` genuinely replaces System.Tags — `op: add` was verified
+        # (empirically, against the live API) to perform a union merge with the
+        # tags already stored, silently no-op'ing every removal. `replace` also
+        # works when the field is currently absent and, with an empty string
+        # value, clears it back to absent.
+        patch_ops.append({"op": "replace", "path": "/fields/System.Tags", "value": "; ".join(new_tags)})
+
+        patch_response = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            url,
+            headers=await build_headers(
+                app_ctx,
+                extra={"Content-Type": "application/json-patch+json"},
+            ),
+            params={"api-version": _WIT_API_VERSION},
+            content=json.dumps(patch_ops).encode(),
+        )
+        patch_response.raise_for_status()
+
+        # Derive the response from what the server actually persisted, not the
+        # locally-computed prediction: Azure DevOps re-sorts System.Tags
+        # alphabetically on store, so the predicted order/casing is not
+        # trustworthy. Diff the server's post-state against the pre-PATCH
+        # current_tags (from the earlier GET) to get the real added/removed.
+        patch_body = patch_response.json()
+        server_tags_raw = patch_body.get("fields", {}).get("System.Tags", "")
+        server_tags = [t.strip() for t in server_tags_raw.split(";") if t.strip()]
+
+        pre_lower_set = {t.lower() for t in current_tags}
+        post_lower_set = {t.lower() for t in server_tags}
+        actual_added = [t for t in server_tags if t.lower() not in pre_lower_set]
+        actual_removed = [t for t in current_tags if t.lower() not in post_lower_set]
+
+        return finalize_response({
+            "work_item_id": params.work_item_id,
+            "changed": True,
+            "tags": server_tags,
+            "added": actual_added,
+            "removed": actual_removed,
+            "count": len(server_tags),
+        })
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", e.response.status_code, msg)
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_update_work_item_tags")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
