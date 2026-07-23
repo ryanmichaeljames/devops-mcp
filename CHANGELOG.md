@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-24
+
+### Added
+
+- `devops_update_work_item_tags` _(write)_ — add and/or remove tags on an existing work item without replacing the whole tag set. Takes `add` and `remove` lists, matches tags case-insensitively (preserving the casing already stored), gives `remove` precedence when a tag appears in both, and skips the update entirely when the result would be unchanged so no pointless revision is created. The update carries a JSON Patch `test` op on `/rev` for optimistic concurrency, and the response reports the tags Azure DevOps actually persisted rather than a client-side prediction. Note that Azure DevOps re-sorts tags alphabetically on save, so the stored order will not match the order supplied.
+
+### Fixed
+
+- `devops_update_work_item` now genuinely replaces the tag set when `tags` is supplied, and clears all tags when given an empty string — as its documentation has always described. Azure DevOps treats a JSON Patch `add` op on `System.Tags` as an additive union merge with the tags already stored rather than a replacement, so the previous implementation could only ever add tags: removals and clears silently had no effect while the call still reported success. Both this tool and `devops_update_work_item_tags` now send a `replace` op, which was verified against the live API to correctly set, replace, and clear the field. `devops_create_work_item` is unaffected, since a new work item has no existing tags to merge with.
+
 ## [1.2.1] - 2026-07-14
 
 ### Fixed
@@ -144,6 +154,8 @@ Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 - **Quality gates** — `ruff` linting and `pytest` (with `pytest-asyncio`); CI runs the matrix across Python 3.10, 3.11, and 3.12 with an import smoke test.
 - **PyPI publishing** — a tag-driven (`v*.*.*`) GitHub Actions workflow (gate → build → publish) using OIDC trusted publishing.
 
+[1.3.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ryanmichaeljames/devops-mcp/releases/tag/v1.0.0

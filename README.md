@@ -223,7 +223,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**48 tools** across 6 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**49 tools** across 6 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -280,7 +280,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_pull_request_iterations` | default | List a pull request's iterations (push history) |
 | `devops_get_pull_request_changes` | default | List changed files for a PR iteration (path + change type) |
 
-### Work Items (9 tools)
+### Work Items (10 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -289,6 +289,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_query_work_items` | default | Query work items with WIQL, auto-fetching full details |
 | `devops_create_work_item` | write | Create a new work item (large-text fields saved as markdown by default; `format=html` to opt out) |
 | `devops_update_work_item` | write | Update fields on an existing work item (large-text fields saved as markdown by default; `format=html` to opt out) |
+| `devops_update_work_item_tags` | write | Add and/or remove tags on an existing work item (case-insensitive matching; unlike `devops_update_work_item`'s `tags` field, this does not replace the whole tag set) |
 | `devops_add_work_item_comment` | write | Add a comment to a work item (markdown by default; `format=html` to opt out) |
 | `devops_update_work_item_comment` | write | Update an existing work item comment (markdown by default; `format=html` to opt out) |
 | `devops_list_work_item_types` | default | List work item types (e.g., Bug, Task, Epic) and their reference names |

@@ -1200,6 +1200,38 @@ class UpdateWorkItemInput(AzDoBaseInput):
     )
 
 
+class UpdateWorkItemTagsInput(AzDoBaseInput):
+    """Input for adding and/or removing tags on an existing work item.
+
+    Unlike devops_update_work_item's 'tags' field (which REPLACES the entire
+    System.Tags value), this tool performs a targeted add/remove against the
+    work item's current tags — existing tags you don't mention are left alone.
+    Tag matching is case-insensitive throughout (e.g., 'Backend' and 'backend'
+    are treated as the same tag). If a tag appears in both 'add' and 'remove',
+    removal wins.
+    """
+
+    work_item_id: int = Field(
+        description="The ID of the work item to update tags on.",
+        ge=1,
+    )
+    add: list[str] | None = Field(
+        default=None,
+        description=(
+            "Tags to add. Matched case-insensitively against existing tags — "
+            "a tag already present (in any casing) is left unchanged rather "
+            "than duplicated. A tag may not contain a semicolon (';')."
+        ),
+    )
+    remove: list[str] | None = Field(
+        default=None,
+        description=(
+            "Tags to remove. Matched case-insensitively; tags not currently "
+            "present are ignored. A tag may not contain a semicolon (';')."
+        ),
+    )
+
+
 class AddWorkItemCommentInput(AzDoBaseInput):
     """Input for adding a comment to a work item."""
 
