@@ -1601,3 +1601,141 @@ class UpdateAdvancedSecurityAlertInput(AzDoBaseInput):
                 "toolUpgrade, notDistributed)."
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Service connections
+# ---------------------------------------------------------------------------
+
+
+class ListServiceConnectionsInput(AzDoBaseInput):
+    """Input for listing service connections (service endpoints) in a project.
+
+    Credential values are never returned by this tool — see
+    devops_get_service_connection for the (still redacted) authorization
+    detail. This route has no server-side pagination; narrow results with
+    type/names/auth_schemes rather than expecting paging.
+    """
+
+    type: str | None = Field(
+        default=None,
+        description="Filter by endpoint type (e.g., 'azurerm', 'github', 'dockerregistry').",
+    )
+    names: list[str] | None = Field(
+        default=None,
+        description=(
+            "Filter to specific service connections by exact name. "
+            "Sent as a single comma-joined value."
+        ),
+        max_length=50,
+    )
+    auth_schemes: list[str] | None = Field(
+        default=None,
+        description=(
+            "Filter by authorization scheme(s) (e.g., 'ServicePrincipal', 'Token'). "
+            "Sent as a single comma-joined value."
+        ),
+        max_length=10,
+    )
+    include_failed: bool | None = Field(
+        default=None,
+        description="When True, also include service connections whose creation failed.",
+    )
+    top: int = Field(
+        default=100,
+        description=(
+            "Maximum number of service connections to return (max 500). Applied "
+            "client-side — the underlying API returns every visible connection "
+            "in one response with no server-side paging."
+        ),
+        ge=1,
+        le=500,
+    )
+
+
+class GetServiceConnectionInput(AzDoBaseInput):
+    """Input for retrieving a single service connection (service endpoint) by ID.
+
+    Credential values are never returned. auth_parameters contains only
+    non-secret identity fields from an explicit allowlist; auth_parameters_dropped
+    lists the names of the fields that were withheld (never their values).
+    """
+
+    endpoint_id: str = Field(
+        description="Service connection ID (GUID).",
+    )
+    include_data: bool = Field(
+        default=True,
+        description=(
+            "Include the (redacted) 'data' bag — non-credential config such as "
+            "subscription id/name or scope level. Set False to omit it entirely."
+        ),
+    )
+
+    @field_validator("endpoint_id", mode="after")
+    @classmethod
+    def validate_endpoint_id(cls, v: str) -> str:
+        return _validate_guid(v, "endpoint_id")
+
+
+# ---------------------------------------------------------------------------
+# Variable groups
+# ---------------------------------------------------------------------------
+
+
+class ListVariableGroupsInput(AzDoBaseInput):
+    """Input for listing variable groups in a project.
+
+    Variable values are never included by default — set include_values=True
+    to include them (still subject to the same secret redaction as
+    devops_get_variable_group). Discovery-safe by default.
+    """
+
+    group_name: str | None = Field(
+        default=None,
+        description="Filter by group name. Supports a trailing wildcard (e.g., 'Prod*').",
+    )
+    top: int = Field(
+        default=100,
+        description="Maximum number of variable groups to return (max 500).",
+        ge=1,
+        le=500,
+    )
+    continuation_token: str | None = Field(
+        default=None,
+        description=(
+            "Pagination token from a previous response's continuation_token field. "
+            "Pass it back verbatim to fetch the next page."
+        ),
+    )
+    query_order: Literal["IdAscending", "IdDescending"] | None = Field(
+        default=None,
+        description="Sort order by group ID. Server default is 'IdDescending' when unset.",
+    )
+    include_values: bool = Field(
+        default=False,
+        description=(
+            "When True, include variable values (subject to secret redaction — "
+            "see devops_get_variable_group). Defaults to False so discovery "
+            "calls cannot leak a value at all."
+        ),
+    )
+
+
+class GetVariableGroupInput(AzDoBaseInput):
+    """Input for retrieving a single variable group by ID, including variable values.
+
+    Secret variables never have their value returned, regardless of what the
+    server sends back. Non-secret variables whose name matches a credential-like
+    pattern (e.g., 'DB_PASSWORD') are also withheld and flagged 'redacted':
+    'name_heuristic' as a safety net for values the author forgot to mark secret.
+    """
+
+    group_id: int = Field(
+        description="The variable group ID.",
+        ge=1,
+    )
+    include_values: bool = Field(
+        default=True,
+        description="When False, return only variable names and flags (no values).",
+    )
