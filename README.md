@@ -36,6 +36,8 @@ uv run devops-mcp
 - [uv](https://docs.astral.sh/uv/) (recommended)
 - A Microsoft Entra ID identity with access to Azure DevOps
 
+Requires the MCP Python SDK `>=2.0.0`. Versions up to and including 1.3.0 require SDK 1.x and will not start against 2.x — the SDK removed `mcp.server.fastmcp` in 2.0.0, so an older release installed today fails at import with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. Upgrade to 1.4.0 or later.
+
 ### Install dependencies
 
 ```bash
