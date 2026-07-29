@@ -1,4 +1,4 @@
-"""FastMCP server for Azure DevOps MCP tools."""
+"""MCPServer entry point for Azure DevOps MCP tools."""
 
 import logging
 import os
@@ -20,6 +20,8 @@ import devops_mcp.tools.discovery  # noqa: E402, F401
 import devops_mcp.tools.pipelines  # noqa: E402, F401
 import devops_mcp.tools.pull_requests  # noqa: E402, F401
 import devops_mcp.tools.repositories  # noqa: E402, F401
+import devops_mcp.tools.service_connections  # noqa: E402, F401
+import devops_mcp.tools.variable_groups  # noqa: E402, F401
 import devops_mcp.tools.work_items  # noqa: E402, F401
 
 

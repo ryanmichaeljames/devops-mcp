@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/devops-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk) over stdio transport.
+An [MCP](https://modelcontextprotocol.io/) server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with [MCPServer](https://github.com/modelcontextprotocol/python-sdk) (the Python MCP SDK's ergonomic server class) over stdio transport.
 
 Communicates over **stdio** and works with GitHub Copilot, Claude Code, and any MCP-compatible client.
 
@@ -35,6 +35,8 @@ uv run devops-mcp
 - Python `>=3.10`
 - [uv](https://docs.astral.sh/uv/) (recommended)
 - A Microsoft Entra ID identity with access to Azure DevOps
+
+Requires the MCP Python SDK `>=2.0.0`. Versions up to and including 1.3.0 require SDK 1.x and will not start against 2.x — the SDK removed `mcp.server.fastmcp` in 2.0.0, so an older release installed today fails at import with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. Upgrade to 1.4.0 or later.
 
 ### Install dependencies
 
@@ -223,7 +225,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**49 tools** across 6 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**53 tools** across 8 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -312,11 +314,31 @@ Requires GitHub Advanced Security for Azure DevOps (GHAzDo) to be enabled on the
 | `devops_get_advanced_security_alert` | default | Get a single alert by ID. `expand=validationFingerprint` can return secret values in cleartext — leave unset unless needed |
 | `devops_update_advanced_security_alert` | write | Dismiss, re-activate, or mark an alert fixed; dismissing requires a dismissal reason |
 
+### Service Connections (2 tools)
+
+Read-only. Credential values are never returned — `authorization.parameters` is projected onto an explicit allowlist of non-secret identity fields (never a denylist, since parameter names are type-specific and open-ended), and the withheld field *names* (never values) are reported back so an agent can tell a credential exists without seeing it.
+
+| Tool | Gate | Description |
+|---|---|---|
+| `devops_list_service_connections` | default | List service connections (service endpoints) in a project; filter by `type`, `names`, or `auth_schemes`. No server-side pagination — `top` is applied client-side |
+| `devops_get_service_connection` | default | Get a single service connection by GUID, including redacted `auth_parameters` (allowlisted identity fields only) and `auth_parameters_dropped` (withheld field names) |
+
+Both tools report health as three separate signals: `is_ready` (provisioning finished), `is_disabled` (turned off) and `is_outdated` (stored config no longer matches the underlying resource — typically an expired or rotated secret). A connection can be ready and still fail to authenticate, so `is_ready` alone is not a health check.
+
+### Variable Groups (2 tools)
+
+Read-only. Secret variables (`isSecret: true`) never have their value returned, regardless of what the server sends back. Non-secret variables whose name matches a credential-like pattern (e.g. `DB_PASSWORD`) are withheld too and flagged `redacted: "name_heuristic"` — a safety net for values the author forgot to mark secret.
+
+| Tool | Gate | Description |
+|---|---|---|
+| `devops_list_variable_groups` | default | List variable groups in a project; variable values are omitted by default (`include_values=False`) so discovery calls cannot leak a value at all |
+| `devops_get_variable_group` | default | Get a single variable group by ID, including (redacted) values by default; set `include_values=False` for names/flags only |
+
 ---
 
 ## API Reference
 
-All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**. Advanced Security alert tools use **v7.2-preview.1** on the `advsec.dev.azure.com` host.
+All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. Service connection and variable group tools use **v7.1** (GA — no preview moniker needed). PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**. Advanced Security alert tools use **v7.2-preview.1** on the `advsec.dev.azure.com` host.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).
 

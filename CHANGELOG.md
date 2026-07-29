@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-07-29
+
+### Added
+
+#### Service connection and variable group tools
+
+Read-only, registered by default.
+
+- `devops_list_service_connections` — list service connections (service endpoints) in a project, filtered by `type`, `names`, or `auth_schemes`. Never returns the credential bag at all. Health is reported as three independent signals: `is_ready` (provisioning finished), `is_disabled` (turned off) and `is_outdated` (stored config no longer matches the underlying resource, typically an expired or rotated secret). A connection can be ready and still fail to authenticate, so `is_ready` alone is not a health check.
+- `devops_get_service_connection` — get one connection by GUID. `authorization.parameters` is projected onto an allowlist of non-secret identity fields rather than filtered by a denylist, since parameter names are endpoint-type-specific and open-ended: a denylist fails open the first time an unrecognised type appears. Withheld field _names_ are reported in `auth_parameters_dropped` so an agent can tell a credential exists without seeing it.
+- `devops_list_variable_groups` — list variable groups, filtered by `group_name` (trailing `*` wildcard). Variable values are omitted by default so broad discovery cannot leak one. Pages via a continuation token.
+- `devops_get_variable_group` — get one group by ID, including values. A variable marked `isSecret` has its `value` key omitted entirely rather than returned as `null`, regardless of what the server sent. Non-secret variables whose name matches a credential-like pattern are withheld too and flagged `redacted: "name_heuristic"`, a safety net for values the author forgot to mark secret.
+
+Microsoft documents no redaction contract for either API, and testing against the live service confirmed why that matters: while Azure DevOps does null a secret variable's value and an authorization password, it returns `data.clientSecret` on a service connection in full plaintext despite the key name. Every response from these four tools is therefore projected onto an explicit allowlist rather than passed through. The refreshed-authentication endpoint is deliberately not implemented, as it mints live credentials.
+
+### Fixed
+
+- The server now runs on the MCP Python SDK 2.x. SDK 2.0.0 removed `mcp.server.fastmcp`, renaming the package to `mcp.server.mcpserver` and the `FastMCP` class to `MCPServer`, and the dependency was declared as an unbounded floor — so a fresh install resolved to 2.x and the server died with `ModuleNotFoundError` before serving a single request. Anyone launching via `uvx`, which ignores the lockfile, hit this immediately. The requirement is now `>=2.0.0,<3.0.0`; the upper bound is the actual lesson, since the previous constraint asserted that every future release would work, including ones not yet written. Tool names, annotations, and response wire format are unchanged.
+
+### Removed
+
+- `docs/design/` — the design notes described intended behavior that has since shipped, and the service connection notes proved factually wrong once checked against the live API (fields documented as requiring api-version `7.2-preview.4` are in fact returned at `7.1`). Stale design notes that contradict the service are worse than none. The rationale that is still load-bearing now lives in the module docstrings beside the code it justifies.
+
 ## [1.3.0] - 2026-07-24
 
 ### Added

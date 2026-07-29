@@ -1,4 +1,4 @@
-"""Smoke test: importing devops_mcp.server registers all tools in the FastMCP registry."""
+"""Smoke test: importing devops_mcp.server registers all tools in the MCPServer registry."""
 
 import devops_mcp.server  # noqa: F401 — side-effect: registers all @mcp.tool() decorators
 from devops_mcp._app import mcp

@@ -1,6 +1,6 @@
 # devops-mcp
 
-An MCP server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with FastMCP over stdio transport.
+An MCP server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with MCPServer (`mcp.server.mcpserver`) over stdio transport.
 
 ## Commands
 
@@ -15,15 +15,21 @@ No test suite exists yet. No linter is configured.
 ```
 src/devops_mcp/
 ├── server.py          # Entry point; configures logging, imports tools to trigger registration
-├── _app.py            # Single FastMCP instance (isolated to avoid circular imports)
+├── _app.py            # Single MCPServer instance (isolated to avoid circular imports)
 ├── client.py          # Shared HTTP client, auth credential factory, lifespan context manager
 ├── models.py          # All Pydantic input models
 └── tools/
-    ├── pipelines.py   # 10 tools: list/get pipelines, runs, builds, logs, timeline, log search, artifacts
-    ├── repositories.py# 3 tools: list repos, get repo, list branches
-    ├── pull_requests.py # 6 tools: get/list/create/update/tag PRs, link work items
-    └── work_items.py  # 7 tools: get/list/query/create/update work items, comments
+    ├── pipelines.py           # 10 tools: list/get pipelines, runs, builds, logs, timeline, log search, artifacts
+    ├── repositories.py        # 7 tools: list/get repos, branches, file content, items, commits
+    ├── pull_requests.py       # 17 tools: get/list/create/update/complete/abandon/vote/tag PRs, work item links, threads/comments, iterations/changes
+    ├── work_items.py          # 10 tools: get/list/query/create/update work items, tags, comments, types/fields
+    ├── discovery.py           # 2 tools: list projects, list teams
+    ├── advanced_security.py   # 3 tools: list/get/update GHAzDo alerts (advsec.dev.azure.com host)
+    ├── service_connections.py # 2 tools: list/get service connections (redacted authorization.parameters)
+    └── variable_groups.py     # 2 tools: list/get variable groups (redacted secret values)
 ```
+
+`redaction.py` — pure secret-hygiene helpers (allowlist/denylist projection, no HTTP/MCP imports) shared by `service_connections.py` and `variable_groups.py`.
 
 **Key invariants:**
 - Python 3.10+, Pydantic v2, `mcp[cli]`, `httpx`, `azure-identity`
