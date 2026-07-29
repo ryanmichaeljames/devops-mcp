@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 
 import httpx
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from devops_mcp._app import mcp, write_tool
 from devops_mcp.client import (

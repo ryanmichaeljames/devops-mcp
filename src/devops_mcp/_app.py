@@ -1,4 +1,4 @@
-"""FastMCP application instance.
+"""MCPServer application instance.
 
 This module exists to avoid circular imports between server.py and tool
 modules. Tool modules import ``mcp`` from here; server.py imports ``mcp``
@@ -7,11 +7,11 @@ from here and registers tool modules.
 
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from devops_mcp.client import devops_lifespan
 
-mcp = FastMCP(
+mcp = MCPServer(
     "devops_mcp",
     instructions=(
         "Azure DevOps MCP server. Use devops_list_pipelines to discover pipelines, "

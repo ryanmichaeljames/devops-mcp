@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/devops-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk) over stdio transport.
+An [MCP](https://modelcontextprotocol.io/) server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with [MCPServer](https://github.com/modelcontextprotocol/python-sdk) (the Python MCP SDK's ergonomic server class) over stdio transport.
 
 Communicates over **stdio** and works with GitHub Copilot, Claude Code, and any MCP-compatible client.
 

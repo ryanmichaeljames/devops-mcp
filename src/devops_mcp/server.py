@@ -1,4 +1,4 @@
-"""FastMCP server for Azure DevOps MCP tools."""
+"""MCPServer entry point for Azure DevOps MCP tools."""
 
 import logging
 import os

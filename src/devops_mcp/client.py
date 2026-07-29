@@ -853,7 +853,7 @@ async def _log_response(response: httpx.Response) -> None:
 
 @asynccontextmanager
 async def devops_lifespan(server) -> AsyncIterator[AppContext]:
-    """FastMCP lifespan that initializes shared Azure DevOps auth state.
+    """MCPServer lifespan that initializes shared Azure DevOps auth state.
 
     Reads configuration from environment variables:
     - AZDO_AUTH_TYPE: Credential type (default: default)

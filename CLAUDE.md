@@ -1,6 +1,6 @@
 # devops-mcp
 
-An MCP server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with FastMCP over stdio transport.
+An MCP server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with MCPServer (`mcp.server.mcpserver`) over stdio transport.
 
 ## Commands
 
@@ -15,7 +15,7 @@ No test suite exists yet. No linter is configured.
 ```
 src/devops_mcp/
 ├── server.py          # Entry point; configures logging, imports tools to trigger registration
-├── _app.py            # Single FastMCP instance (isolated to avoid circular imports)
+├── _app.py            # Single MCPServer instance (isolated to avoid circular imports)
 ├── client.py          # Shared HTTP client, auth credential factory, lifespan context manager
 ├── models.py          # All Pydantic input models
 └── tools/

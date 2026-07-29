@@ -3,7 +3,7 @@
 import logging
 
 import httpx
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from devops_mcp._app import mcp
 from devops_mcp.client import (
