@@ -144,6 +144,9 @@ def _adversarial_endpoint_payload():
         "url": "https://example.invalid",
         "description": "adversarial test endpoint",
         "isReady": True,
+        "isDisabled": True,
+        "isOutdated": True,
+        "creationDate": "2026-07-01T00:00:00Z",
         "isShared": False,
         "owner": "Library",
         "authorization": {
@@ -225,6 +228,48 @@ async def test_list_service_connections_never_touches_auth_bag():
     assert "data" not in item
     assert "data_dropped" not in item
     assert item["auth_scheme"] == "ServicePrincipal"
+
+
+@pytest.mark.asyncio
+async def test_service_connection_health_fields_projected():
+    """is_ready alone is not a health check.
+
+    A connection can be provisioned (isReady) and still be turned off or
+    holding a stale credential, so is_disabled and is_outdated must survive
+    the projection independently. All three, plus creationDate, are returned
+    at api-version 7.1 — verified live, despite docs implying 7.2-preview.
+    """
+    payload = _adversarial_endpoint_payload()
+
+    def list_handler(req):
+        return _json_response(200, {"count": 1, "value": [payload]}, req)
+
+    transport, http_client = _build_client(list_handler)
+    app_ctx = _make_app_ctx()
+    app_ctx.http_client = http_client
+    ctx = _make_mock_ctx(app_ctx)
+    list_params = ListServiceConnectionsInput(organization=FAKE_ORG, project=FAKE_PROJECT)
+    list_json = await _run_with_patches(SC_MODULE, devops_list_service_connections, list_params, ctx)
+    item = json.loads(list_json)["service_connections"][0]
+
+    def get_handler(req):
+        return _json_response(200, payload, req)
+
+    transport, http_client = _build_client(get_handler)
+    app_ctx = _make_app_ctx()
+    app_ctx.http_client = http_client
+    ctx = _make_mock_ctx(app_ctx)
+    get_params = GetServiceConnectionInput(
+        organization=FAKE_ORG, project=FAKE_PROJECT, endpoint_id=FAKE_ENDPOINT_ID
+    )
+    get_json = await _run_with_patches(SC_MODULE, devops_get_service_connection, get_params, ctx)
+    detail = json.loads(get_json)
+
+    for projected in (item, detail):
+        assert projected["is_ready"] is True
+        assert projected["is_disabled"] is True
+        assert projected["is_outdated"] is True
+        assert projected["created_on"] == "2026-07-01T00:00:00Z"
 
 
 def _adversarial_group_payload(extra_provider_data=None):

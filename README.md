@@ -321,6 +321,8 @@ Read-only. Credential values are never returned — `authorization.parameters` i
 | `devops_list_service_connections` | default | List service connections (service endpoints) in a project; filter by `type`, `names`, or `auth_schemes`. No server-side pagination — `top` is applied client-side |
 | `devops_get_service_connection` | default | Get a single service connection by GUID, including redacted `auth_parameters` (allowlisted identity fields only) and `auth_parameters_dropped` (withheld field names) |
 
+Both tools report health as three separate signals: `is_ready` (provisioning finished), `is_disabled` (turned off) and `is_outdated` (stored config no longer matches the underlying resource — typically an expired or rotated secret). A connection can be ready and still fail to authenticate, so `is_ready` alone is not a health check.
+
 ### Variable Groups (2 tools)
 
 Read-only. Secret variables (`isSecret: true`) never have their value returned, regardless of what the server sends back. Non-secret variables whose name matches a credential-like pattern (e.g. `DB_PASSWORD`) are withheld too and flagged `redacted: "name_heuristic"` — a safety net for values the author forgot to mark secret.

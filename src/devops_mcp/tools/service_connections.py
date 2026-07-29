@@ -69,7 +69,10 @@ def _project_list_item(ep: dict) -> dict:
         "url": ep.get("url"),
         "description": ep.get("description"),
         "is_ready": ep.get("isReady"),
+        "is_disabled": ep.get("isDisabled"),
+        "is_outdated": ep.get("isOutdated"),
         "is_shared": ep.get("isShared"),
+        "created_on": ep.get("creationDate"),
         "owner": ep.get("owner"),
         "auth_scheme": authorization.get("scheme"),
         "operation_status": _project_operation_status(ep.get("operationStatus")),
@@ -138,10 +141,14 @@ def _get_error_message(status_code: int, msg: str, *, project: str, endpoint_id:
 async def devops_list_service_connections(params: ListServiceConnectionsInput, ctx: Context) -> str:
     """List service connections (service endpoints) in an Azure DevOps project.
 
-    Discovery tool — returns identity, readiness, and sharing info per
+    Discovery tool — returns identity, health, and sharing info per
     connection, but never touches authorization.parameters (the credential
     bag); use devops_get_service_connection for the (still redacted) auth
-    detail. Filter with type, names, and/or auth_schemes to narrow results —
+    detail. Health is three separate signals: is_ready covers provisioning,
+    while is_disabled (turned off) and is_outdated (stored config no longer
+    matches the resource, typically an expired or rotated secret) cover
+    runtime — a connection can be ready and still fail to authenticate.
+    Filter with type, names, and/or auth_schemes to narrow results —
     this route has no server-side pagination, so top is applied client-side
     and has_more indicates more connections exist than were returned.
 
@@ -276,7 +283,10 @@ async def devops_get_service_connection(params: GetServiceConnectionInput, ctx: 
             "url": data.get("url"),
             "description": data.get("description"),
             "is_ready": data.get("isReady"),
+            "is_disabled": data.get("isDisabled"),
+            "is_outdated": data.get("isOutdated"),
             "is_shared": data.get("isShared"),
+            "created_on": data.get("creationDate"),
             "owner": data.get("owner"),
             "auth_scheme": authorization.get("scheme"),
             "auth_parameters": auth_params,
