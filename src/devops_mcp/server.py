@@ -16,6 +16,7 @@ from devops_mcp._app import mcp  # noqa: E402
 
 # Import tool modules to trigger @mcp.tool() registration
 import devops_mcp.tools.advanced_security  # noqa: E402, F401
+import devops_mcp.tools.attachments  # noqa: E402, F401
 import devops_mcp.tools.discovery  # noqa: E402, F401
 import devops_mcp.tools.pipelines  # noqa: E402, F401
 import devops_mcp.tools.pull_requests  # noqa: E402, F401
