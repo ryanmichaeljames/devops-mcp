@@ -70,6 +70,7 @@ All configuration is driven by environment variables — no secrets in code, no 
 | `AZDO_EPHEMERAL_TOKEN` | No | `false` | **Interactive auth only.** When `false` (the default), the MSAL token cache is persisted to disk via the OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret), and an `AuthenticationRecord` sidecar is written to `~/.devops-mcp/auth-record.json` so subsequent server restarts authenticate silently without a new browser prompt. Set `true`, `1`, or `yes` to use an in-memory-only cache (no disk cache, no sidecar) — re-prompts on every restart. Invalid values fall back to `false` with a logged warning. Has no effect on any auth type other than `interactive`. |
 | `AZDO_TOKEN_CACHE_PROFILE` | No | — | **Interactive auth only.** A filename-safe suffix (`[A-Za-z0-9_-]`) appended to the MSAL cache name and the `AuthenticationRecord` sidecar so two server instances signed in to **different tenants/accounts** on the same host keep separate caches instead of overwriting each other's pinned account. Omit (or leave empty) for a single-tenant setup — the original shared filenames are used. Characters outside `[A-Za-z0-9_-]` raise an error rather than being silently dropped (sanitizing could collapse two distinct profiles into one shared cache). |
 | `AZDO_AUTH_TIMEOUT_SECONDS` | No | `30` | Maximum seconds to wait for credential acquisition before failing with an auth error. Applies to all auth types. Invalid or non-positive values fall back to `30`. Increase this in slow-network or MFA-heavy environments. |
+| `AZDO_ATTACHMENT_ROOT` | No | — | **Upload hardening.** When set, `devops_upload_work_item_attachment` will only read a `file_path` that resolves inside this directory tree; anything else is refused. Unset (the default) means no directory restriction, matching the server's existing trust model — it runs as you, with your credentials. Set it when the server runs with broader credentials than the human at the keyboard. |
 
 ---
 
@@ -99,9 +100,28 @@ The server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-iden
 
 Write and delete tools are **not registered by default** — they do not appear to the agent at all until explicitly enabled. The server is read-only until `AZDO_ALLOW_WRITE=true` and/or `AZDO_ALLOW_DELETE=true` are set. Each flag is independent; set only the ones you need.
 
+`devops_delete_work_item` is the only tool behind the `delete` gate and the only one annotated `destructiveHint: true`. Its default is the **recoverable** operation: the work item goes to the project's recycle bin and a human can restore it from Boards > Work Items > Recycle Bin. The unrecoverable operation is opt-in per call via `destroy=true`, which erases the work item and all its revisions with no undo — Azure DevOps guards that separately with the project-level *Permanently delete work items* permission, held by Project Administrators by default, so an ordinary contributor's token gets an HTTP 403 rather than a silent permanent delete.
+
 ### Env-driven configuration
 
 All configuration is supplied via environment variables. No secrets, org names, project names, or tenant IDs are hardcoded. `.vscode/mcp.json` is gitignored because it may contain credentials.
+
+### Attachment URLs are rebuilt, never followed
+
+`devops_get_work_item_attachment` accepts a `url` so an agent can paste the `<img src>` it found in a work item description. That description is user-authored content and therefore a prompt-injection surface: fetching an arbitrary URL with an `Authorization: Bearer …` header attached would hand a live Azure DevOps token to whatever host an injected description names.
+
+The guard is not a host allowlist — an open redirect on a Microsoft-owned host would defeat that. The URL is **parsed and then discarded**: the scheme must be `https`, the netloc must carry no userinfo and no non-443 port, the parsed hostname must be `dev.azure.com` or `{org}.visualstudio.com`, the path must be the `/_apis/wit/attachments/{guid}` route, and the organization named in the URL must match the resolved one. Only the attachment GUID and `fileName` survive; the request is rebuilt against the resolved organization. Every rejection happens **before** a token is acquired, so a crafted URL never causes one to be minted.
+
+Two relative shapes are accepted alongside the absolute one, because the web UI can write either into an `<img src>`: protocol-relative `//dev.azure.com/{org}/…`, which gets the identical host, userinfo and port treatment with the scheme taken to be `https`, and site-relative `/{org}/_apis/wit/attachments/{guid}`, which has no host to check but still has to name the resolved organization in its first path segment. Neither weakens anything — the URL is discarded and the request rebuilt either way, so there is no host to follow — and a relative URL naming a different organization is refused and counted exactly like an absolute one. The alternative was worse: before, they matched nothing at all and were *silently* missed, so a caller saw a clean result rather than a rejection.
+
+The same guard runs on every URL the other attachment tools handle, for two more reasons:
+
+- `devops_list_work_item_attachments` scrapes URLs out of field and comment text — the most attacker-influenceable input in the product. A URL that fails validation is dropped and only *counted* (`rejected_urls`); it is never repeated back, because echoing it would relay to the model exactly the payload the guard just caught. Only canonical rebuilt URLs are ever surfaced.
+- `devops_link_work_item_attachment` **stores** a URL on the work item. An unvalidated one there is a persistent injection vector re-read by every future reader, not a single bad request — so the supplied URL is parsed, discarded, and the relation is rebuilt from the resolved organization before anything is written.
+
+### Attachment uploads are image-only, by bytes as well as by name
+
+`devops_upload_work_item_attachment` reads a local file chosen by a model, which in the general case is a data-exfiltration primitive. Four guards apply: it is registered only under `AZDO_ALLOW_WRITE`; the file name must end in `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`; the **actual bytes** must carry a matching image signature, so renaming `id_rsa` to `x.png` is refused; and the path is resolved (collapsing `..`) and must be a regular file. Set `AZDO_ATTACHMENT_ROOT` to additionally confine reads to one directory tree. Weakening the extension allowlist or the magic-byte check — for example "to support PDFs" — is a security change, not a feature tweak.
 
 ### Stdout reserved for MCP transport
 
@@ -225,7 +245,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**53 tools** across 8 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**59 tools** across 8 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -248,14 +268,15 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_build_artifacts` | default | List artifacts produced by a build |
 | `devops_run_pipeline` | write | Trigger a new pipeline run; optionally override branch, template parameters, or queue-time variables |
 
-### Repositories (7 tools)
+### Repositories (8 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
 | `devops_list_repositories` | default | List Git repositories in a project |
 | `devops_get_repository` | default | Get details of a specific repository |
 | `devops_list_branches` | default | List branches in a repository |
-| `devops_get_file_content` | default | Get the text content of a file; supports optional `branch` or `commit_id`; binary files return an error |
+| `devops_get_file_content` | default | Get the text content of a file; supports optional `branch` or `commit_id`; binary files return an error pointing at `devops_get_repository_image`. Sends `$format=octetStream`, without which the Git Items route returns the item's metadata JSON rather than the file |
+| `devops_get_repository_image` | default | Read an image committed to a repository (diagram, chart, design asset) and return it as viewable image content. Same addressing as `devops_get_file_content`; a sibling rather than a change to it, so the text tool's contract is untouched |
 | `devops_list_repository_items` | default | Browse files and folders; control depth with `recursion_level` (`oneLevel`, `full`, etc.) |
 | `devops_list_commits` | default | List commits with optional filters for branch, author, and date range |
 | `devops_get_commit` | default | Get details of a specific commit; set `change_count` to include changed file paths |
@@ -282,7 +303,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_list_pull_request_iterations` | default | List a pull request's iterations (push history) |
 | `devops_get_pull_request_changes` | default | List changed files for a PR iteration (path + change type) |
 
-### Work Items (10 tools)
+### Work Items (15 tools)
 
 | Tool | Gate | Description |
 |---|---|---|
@@ -294,8 +315,13 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_update_work_item_tags` | write | Add and/or remove tags on an existing work item (case-insensitive matching; unlike `devops_update_work_item`'s `tags` field, this does not replace the whole tag set) |
 | `devops_add_work_item_comment` | write | Add a comment to a work item (markdown by default; `format=html` to opt out) |
 | `devops_update_work_item_comment` | write | Update an existing work item comment (markdown by default; `format=html` to opt out) |
+| `devops_delete_work_item` | delete | Delete a work item. By default it goes to the project's **recycle bin** and can be restored; `destroy=true` permanently destroys it with no recycle bin and no way to recover it (and needs the elevated *Permanently delete work items* permission) |
 | `devops_list_work_item_types` | default | List work item types (e.g., Bug, Task, Epic) and their reference names |
 | `devops_list_work_item_fields` | default | List field definitions for a work item type or all fields in the process |
+| `devops_list_work_item_attachments` | default | List every attachment a work item references, from **both** surfaces: `AttachedFile` relations (the Attachments tab) *and* images pasted inline into large-text fields. De-duplicated by attachment GUID, with the `sources` and field names each was found in. The **most recent** comment is always scanned, since `System.History` carries its text; `include_comments=true` costs one extra call and reaches *older* comments plus their comment ids |
+| `devops_get_work_item_attachment` | default | Download an attachment and return it as viewable image content, from an `attachment_id` or an `<img src>` URL copied out of a description. Returns image blocks rather than JSON alone; non-image attachments are reported as metadata only |
+| `devops_upload_work_item_attachment` | write | Upload an image (from `file_path` or `data_base64`) and return the attachment reference plus ready-to-paste `embed.markdown` / `embed.html` snippets. Images only — the extension allowlist *and* the file's magic bytes must both agree |
+| `devops_link_work_item_attachment` | write | Add the `AttachedFile` relation that puts an uploaded attachment on the Attachments tab — the second step `devops_upload_work_item_attachment` deliberately does not perform. Idempotent (no PATCH when already linked) and guarded by a `/rev` test op |
 
 ### Discovery (2 tools)
 

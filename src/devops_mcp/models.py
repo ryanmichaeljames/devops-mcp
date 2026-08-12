@@ -1,9 +1,18 @@
 """Pydantic input models for all Azure DevOps MCP tools."""
 
+import base64
+import binascii
 import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from devops_mcp.attachment_media import (
+    ALLOWED_UPLOAD_EXTENSIONS,
+    MAX_FILE_NAME_LENGTH,
+    file_name_rejection_reason,
+    image_format_from_name,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +395,40 @@ class GetFileContentInput(AzDoBaseInput):
 
 
 _VALID_RECURSION_LEVELS = {"none", "oneLevel", "full", "oneLevelPlusNestedEmptyFolders"}
+
+
+class GetRepositoryImageInput(AzDoBaseInput):
+    """Input for retrieving an image file from a Git repository as image content.
+
+    Same addressing as GetFileContentInput — the difference is entirely in what
+    comes back: this tool returns the picture, devops_get_file_content returns
+    text and refuses binary.
+    """
+
+    repository_id: str = Field(
+        description="Repository ID (UUID) or repository name.",
+    )
+    path: str = Field(
+        description=(
+            "Path to the image file within the repository "
+            "(e.g., '/docs/architecture.png')."
+        ),
+        min_length=1,
+    )
+    branch: str | None = Field(
+        default=None,
+        description=(
+            "Branch name to read from (e.g., 'main'). "
+            "Omit to read from the repository's default branch."
+        ),
+    )
+    commit_id: str | None = Field(
+        default=None,
+        description=(
+            "Commit SHA to read from. "
+            "Takes precedence over branch when both are supplied."
+        ),
+    )
 
 
 class ListRepositoryItemsInput(AzDoBaseInput):
@@ -1289,6 +1332,33 @@ class ListWorkItemFieldsInput(AzDoBaseInput):
     )
 
 
+class DeleteWorkItemInput(AzDoBaseInput):
+    """Input for deleting a work item.
+
+    Two very different operations share this input. The default (destroy=False)
+    sends the work item to the project's recycle bin, from which it can be
+    restored. destroy=True permanently destroys it — no recycle bin, no undo.
+    """
+
+    work_item_id: int = Field(
+        description="The ID of the work item to delete.",
+        ge=1,
+    )
+    destroy: bool = Field(
+        default=False,
+        description=(
+            "Leave False (the default) to send the work item to the project's recycle bin, "
+            "where it stays until someone restores or permanently deletes it. "
+            "Set True ONLY on an explicit, informed instruction from the user: destroy=true "
+            "PERMANENTLY destroys the work item and all of its revisions — it does NOT go to "
+            "the recycle bin and there is NO way to restore or recover it afterwards. "
+            "It also requires the project-level 'Permanently delete work items' permission "
+            "(granted to Project Administrators by default), so it will fail with HTTP 403 "
+            "for an ordinary contributor."
+        ),
+    )
+
+
 class CompletePullRequestInput(AzDoBaseInput):
     """Input for completing (merging) an Azure DevOps pull request."""
 
@@ -1739,3 +1809,316 @@ class GetVariableGroupInput(AzDoBaseInput):
         default=True,
         description="When False, return only variable names and flags (no values).",
     )
+
+
+# ---------------------------------------------------------------------------
+# Work item attachments
+# ---------------------------------------------------------------------------
+
+# Reserved device names on Windows. A file name matching one of these (with or
+# without an extension) is a bug signal wherever it came from.
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)}
+    | {f"lpt{i}" for i in range(1, 10)}
+)
+
+_MAX_FILE_NAME_LENGTH = MAX_FILE_NAME_LENGTH
+
+
+def _basename(path: str) -> str:
+    """Return the last path segment of *path*, splitting on both / and \\.
+
+    Deliberately string-only (no ``pathlib``/``os.path``): models must never
+    touch or depend on the host filesystem, and the separator handling has to
+    be identical whichever OS the server runs on.
+    """
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
+def _validate_attachment_file_name(name: str) -> str:
+    """Validate an attachment file name and return it unchanged.
+
+    The name is sent as a query parameter, not a path segment, so traversal is
+    not directly exploitable — but a file name that reads like a path is a bug
+    signal either way, and the extension allowlist is a genuine security
+    control on the upload path (see devops_mcp.attachment_media).
+    """
+    if not name:
+        raise ValueError(
+            "'file_name' must not be empty. Supply a bare file name such as "
+            "'screenshot.png'."
+        )
+    if len(name) > _MAX_FILE_NAME_LENGTH:
+        raise ValueError(
+            f"'file_name' must be at most {_MAX_FILE_NAME_LENGTH} characters; "
+            f"got {len(name)}."
+        )
+    if "/" in name or "\\" in name or ".." in name:
+        raise ValueError(
+            f"'file_name' must be a bare file name with no path separators or '..'; "
+            f"got {name!r}."
+        )
+    if name.rsplit(".", 1)[0].lower() in _WINDOWS_RESERVED_NAMES:
+        raise ValueError(
+            f"'file_name' {name!r} is a reserved device name on Windows. "
+            "Choose a different name."
+        )
+    if image_format_from_name(name) is None:
+        allowed = ", ".join(sorted(ALLOWED_UPLOAD_EXTENSIONS))
+        raise ValueError(
+            f"'file_name' {name!r} does not have an allowed image extension. "
+            f"Only image attachments can be uploaded by this tool ({allowed}). "
+            "This allowlist is a security control — it keeps non-image files "
+            "such as .env, .pem or key material out of reach."
+        )
+    return name
+
+
+class GetWorkItemAttachmentInput(AzDoBaseInput):
+    """Input for downloading a work item attachment as viewable image content.
+
+    Supply exactly one of 'attachment_id' or 'url'. The 'project' field
+    inherited from AzDoBaseInput is unused — the attachment download endpoint
+    is organization-scoped, so an attachment in any project of the resolved
+    organization is reachable without naming that project.
+
+    A supplied 'url' is never fetched as given. It is parsed for the attachment
+    GUID and 'fileName' only, and the request is re-issued against a URL built
+    from the resolved organization; a URL naming a different host or a different
+    organization is refused before any credential is acquired.
+    """
+
+    attachment_id: str | None = Field(
+        default=None,
+        description="Attachment GUID. Supply this or 'url', not both.",
+    )
+    url: str | None = Field(
+        default=None,
+        description=(
+            "Full Azure DevOps attachment URL, e.g. copied out of a work item "
+            "description's <img src>. Only the attachment GUID and fileName are "
+            "used; the request is always re-issued against the resolved organization."
+        ),
+    )
+    file_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional file name hint. Defaults to the 'fileName' query parameter "
+            "parsed from 'url'. Used to pick an image format when the bytes carry "
+            "no recognisable signature."
+        ),
+    )
+
+    @field_validator("attachment_id", mode="after")
+    @classmethod
+    def validate_attachment_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_guid(v, "attachment_id")
+
+    @field_validator("file_name", mode="after")
+    @classmethod
+    def validate_file_name(cls, v: str | None) -> str | None:
+        # Same predicate LinkWorkItemAttachmentInput uses, and the same one the
+        # URL parser applies to a `fileName` hint — the three ways a file name
+        # can enter these tools must not disagree about what is acceptable.
+        return _validate_relation_file_name(v)
+
+    @model_validator(mode="after")
+    def _require_exactly_one_source(self) -> "GetWorkItemAttachmentInput":
+        if bool(self.attachment_id) == bool(self.url):
+            raise ValueError(
+                "Supply exactly one of 'attachment_id' (the attachment GUID) or "
+                "'url' (a full Azure DevOps attachment URL), not both and not neither."
+            )
+        return self
+
+
+class UploadWorkItemAttachmentInput(AzDoBaseInput):
+    """Input for uploading an image as a work item attachment.
+
+    Supply exactly one of 'file_path' (a local file on the machine running this
+    MCP server) or 'data_base64' (bytes the agent already holds). Only images
+    are accepted: the file name must carry an image extension, and the tool
+    additionally verifies the actual bytes carry a matching magic-byte
+    signature before anything is sent.
+
+    Uploading does not attach the file to a work item — it returns an
+    attachment reference plus embed snippets. Use devops_update_work_item to
+    put the snippet into a field, or to add an AttachedFile relation.
+    """
+
+    file_path: str | None = Field(
+        default=None,
+        description=(
+            "Absolute path to a local image file on the machine running this MCP "
+            "server. Supply this or 'data_base64', not both."
+        ),
+    )
+    data_base64: str | None = Field(
+        default=None,
+        description=(
+            "Base64-encoded image bytes. Use for images the agent generated in "
+            "memory; requires 'file_name'."
+        ),
+    )
+    file_name: str | None = Field(
+        default=None,
+        description=(
+            "Name to store the attachment under. Required with 'data_base64'; "
+            "defaults to the basename of 'file_path'. Must be a bare file name — "
+            "no path separators — ending in .png, .jpg, .jpeg, .gif or .webp."
+        ),
+    )
+    area_path: str | None = Field(
+        default=None,
+        description="Optional target project area path for the attachment.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_source_and_name(self) -> "UploadWorkItemAttachmentInput":
+        if bool(self.file_path) == bool(self.data_base64):
+            raise ValueError(
+                "Supply exactly one of 'file_path' (a local image file) or "
+                "'data_base64' (base64-encoded image bytes), not both and not neither."
+            )
+
+        if self.data_base64 and not self.file_name:
+            raise ValueError(
+                "'file_name' is required when uploading with 'data_base64' — there is "
+                "no path to derive a name from. Supply e.g. file_name='diagram.png'."
+            )
+
+        if not self.file_name and self.file_path:
+            self.file_name = _basename(self.file_path)
+
+        self.file_name = _validate_attachment_file_name(self.file_name or "")
+
+        if self.data_base64:
+            try:
+                base64.b64decode(self.data_base64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError(
+                    f"'data_base64' is not valid base64 ({exc}). Supply standard "
+                    "base64-encoded image bytes with no data: URI prefix."
+                )
+
+        return self
+
+
+class ListWorkItemAttachmentsInput(AzDoBaseInput):
+    """Input for listing every attachment referenced by a work item.
+
+    Covers both surfaces: files on the Attachments tab (AttachedFile relations)
+    and images pasted inline into large-text fields (a URL in the field text,
+    which is NOT necessarily a relation).
+    """
+
+    work_item_id: int = Field(
+        description="The ID of the work item to list attachments for.",
+        ge=1,
+    )
+    include_comments: bool = Field(
+        default=False,
+        description=(
+            "Also scan the work item's discussion comments for inline attachment "
+            "URLs. Off by default because it costs an extra API round trip; set it "
+            "when a screenshot may have been pasted into a comment rather than into "
+            "the description."
+        ),
+    )
+
+
+def _validate_relation_file_name(value: str | None) -> str | None:
+    """Validate an attachment file-name hint destined for a stored relation URL.
+
+    Deliberately *not* the upload validator: an AttachedFile relation may point
+    at a PDF, a zip or a log, so no extension allowlist applies. What is
+    enforced is what makes the value safe to percent-encode into a URL that is
+    then persisted on the work item — no control characters (CR/LF included) and
+    a bounded length.
+
+    The rule itself lives in ``attachment_media.file_name_rejection_reason``
+    because the *other* way a file name enters these tools — parsed out of a
+    caller-supplied URL's ``fileName`` query parameter — has to apply the same
+    check. Only the policy differs: an explicit field is a caller error and
+    raises, a URL-derived hint is dropped so the attachment GUID stays usable.
+    """
+    if value is None:
+        return None
+    name = value.strip()
+    reason = file_name_rejection_reason(name)
+    if reason is not None:
+        raise ValueError(
+            f"'file_name' is unusable: {reason}. Supply a bare file name such as "
+            "'screenshot.png'."
+        )
+    return name
+
+
+class LinkWorkItemAttachmentInput(AzDoBaseInput):
+    """Input for adding an AttachedFile relation to a work item.
+
+    Supply exactly one of 'attachment_id' or 'url' — the same shape, and the
+    same guarantee, as GetWorkItemAttachmentInput: a supplied 'url' is parsed
+    for the attachment GUID and 'fileName' and then discarded, and the relation
+    that gets stored is built from the resolved organization. That matters more
+    here than on download: a URL written into a relation is persisted for every
+    future reader of the work item, not used once.
+    """
+
+    work_item_id: int = Field(
+        description="The ID of the work item to attach the file to.",
+        ge=1,
+    )
+    attachment_id: str | None = Field(
+        default=None,
+        description=(
+            "Attachment GUID, as returned by devops_upload_work_item_attachment. "
+            "Supply this or 'url', not both."
+        ),
+    )
+    url: str | None = Field(
+        default=None,
+        description=(
+            "Full Azure DevOps attachment URL (e.g. the 'url' returned by "
+            "devops_upload_work_item_attachment). Only the attachment GUID and "
+            "fileName are used; the stored relation is always rebuilt against the "
+            "resolved organization."
+        ),
+    )
+    file_name: str | None = Field(
+        default=None,
+        description=(
+            "File name to show on the Attachments tab. Defaults to the 'fileName' "
+            "query parameter parsed from 'url'. Azure DevOps takes the display name "
+            "from the relation URL, so without either the file appears unnamed."
+        ),
+    )
+    comment: str | None = Field(
+        default=None,
+        description="Optional comment stored on the relation (attributes.comment).",
+        max_length=1000,
+    )
+
+    @field_validator("attachment_id", mode="after")
+    @classmethod
+    def validate_attachment_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return _validate_guid(v, "attachment_id")
+
+    @field_validator("file_name", mode="after")
+    @classmethod
+    def validate_file_name(cls, v: str | None) -> str | None:
+        return _validate_relation_file_name(v)
+
+    @model_validator(mode="after")
+    def _require_exactly_one_source(self) -> "LinkWorkItemAttachmentInput":
+        if bool(self.attachment_id) == bool(self.url):
+            raise ValueError(
+                "Supply exactly one of 'attachment_id' (the attachment GUID) or "
+                "'url' (a full Azure DevOps attachment URL), not both and not neither."
+            )
+        return self

@@ -7,7 +7,7 @@ from urllib.parse import quote
 import httpx
 from mcp.server.mcpserver import Context
 
-from devops_mcp._app import mcp, write_tool
+from devops_mcp._app import delete_tool, mcp, write_tool
 from devops_mcp.client import (
     AppContext,
     build_headers,
@@ -22,6 +22,7 @@ from devops_mcp.client import (
 from devops_mcp.models import (
     AddWorkItemCommentInput,
     CreateWorkItemInput,
+    DeleteWorkItemInput,
     GetWorkItemInput,
     ListWorkItemFieldsInput,
     ListWorkItemsInput,
@@ -721,6 +722,152 @@ async def devops_update_work_item_comment(params: UpdateWorkItemCommentInput, ct
         return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in devops_update_work_item_comment")
+        return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+@delete_tool(
+    name="devops_delete_work_item",
+    annotations={
+        "title": "Delete Work Item",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def devops_delete_work_item(params: DeleteWorkItemInput, ctx: Context) -> str:
+    """Delete an Azure DevOps work item. THIS TOOL DESTROYS DATA — read both modes.
+
+    Two very different operations, selected by the 'destroy' parameter:
+
+    - destroy=False (THE DEFAULT, and what you should almost always use):
+      the work item is sent to the project's RECYCLE BIN. It disappears from
+      backlogs, boards and queries, but it is RECOVERABLE — a human can restore
+      it from Boards > Work Items > Recycle Bin in the web portal, with all
+      fields intact. Requires the project-level 'Delete and restore work items'
+      permission (Contributors have it by default).
+
+    - destroy=True: the work item is PERMANENTLY DESTROYED, together with all
+      of its revisions, and is removed from the work tracking data store. It
+      does NOT go to the recycle bin. There is NO undo, NO restore, and NO
+      support path to get it back. Requires the project-level 'Permanently
+      delete work items' permission (Project Administrators only, by default),
+      so it commonly fails with HTTP 403. Only pass destroy=True when the user
+      has explicitly and unambiguously asked for a permanent, unrecoverable
+      delete — if there is any doubt, use the default and tell them the item is
+      in the recycle bin.
+
+    Deleting a parent work item does not delete its children; they are simply
+    unparented. Returns the deleted work item's id plus, when Azure DevOps
+    includes them in the response, its type and title — and always 'destroyed'
+    (true|false) so the caller can tell which of the two operations actually ran.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    # Bound up front so the HTTP error handlers below (which name it) can never
+    # raise NameError out of an except clause — no exception may escape a tool.
+    project = params.project or ""
+    try:
+        organization = resolve_org(app_ctx, params.organization)
+        project = resolve_project(app_ctx, params.project)
+        url = build_url(organization, project, f"wit/workitems/{params.work_item_id}")
+
+        # 'destroy' is sent explicitly in both states rather than omitted when
+        # False: for the one destructive tool in this server, the requested mode
+        # should be visible on the wire (and in the debug request log) instead of
+        # resting on the endpoint's documented default staying what it is today.
+        response = await request_with_retry(
+            app_ctx.http_client,
+            "DELETE",
+            url,
+            headers=await build_headers(app_ctx),
+            params={
+                "api-version": _WIT_API_VERSION,
+                "destroy": "true" if params.destroy else "false",
+            },
+        )
+        response.raise_for_status()
+
+        # The reference documents a 200 with a WorkItemDelete body
+        # (id/name/type/project/deletedBy/deletedDate/resource), but its own
+        # sample response is a bodiless 204 — so treat the body as optional and
+        # never let its absence turn a successful delete into an error.
+        body: dict = {}
+        if response.status_code != 204 and response.content:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                body = parsed
+
+        fields = body.get("resource", {}).get("fields", {}) if isinstance(body.get("resource"), dict) else {}
+        title = body.get("name") or fields.get("System.Title")
+        work_item_type = body.get("type") or fields.get("System.WorkItemType")
+
+        result: dict = {
+            "work_item_id": body.get("id", params.work_item_id),
+            "deleted": True,
+            "destroyed": params.destroy,
+            "recoverable": not params.destroy,
+            "project": body.get("project") or project,
+        }
+        if work_item_type is not None:
+            result["work_item_type"] = work_item_type
+        if title is not None:
+            result["title"] = title
+        if body.get("deletedBy") is not None:
+            result["deleted_by"] = body["deletedBy"]
+        if body.get("deletedDate") is not None:
+            result["deleted_date"] = body["deletedDate"]
+        result["message"] = (
+            f"Work item {params.work_item_id} was PERMANENTLY DESTROYED in project "
+            f"'{project}'. It did not go to the recycle bin and cannot be restored."
+            if params.destroy
+            else (
+                f"Work item {params.work_item_id} was moved to the recycle bin of project "
+                f"'{project}'. It can be restored from Boards > Work Items > Recycle Bin."
+            )
+        )
+        return finalize_response(result)
+
+    except ValueError as e:
+        return finalize_response({"error": True, "message": str(e)})
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        msg = extract_error_message(e.response)
+        logger.error("Azure DevOps HTTP %d: %s", status, msg)
+        if status == 404:
+            return finalize_response({
+                "error": True,
+                "message": (
+                    f"Work item {params.work_item_id} was not found in project '{project}'. "
+                    "It may already have been deleted (check the project's recycle bin: "
+                    "Boards > Work Items > Recycle Bin), it may belong to a different "
+                    f"project, or the ID may be wrong. Azure DevOps said: {msg}"
+                ),
+            })
+        if status in (401, 403):
+            required = (
+                "the project-level 'Permanently delete work items' permission (granted to "
+                "Project Administrators by default) — destroy=true needs more than ordinary "
+                "delete rights"
+                if params.destroy
+                else (
+                    "the project-level 'Delete and restore work items' permission (granted to "
+                    "Contributors by default)"
+                )
+            )
+            return finalize_response({
+                "error": True,
+                "message": (
+                    f"Not authorized (HTTP {status}) to delete work item {params.work_item_id} "
+                    f"in project '{project}'. Deleting requires {required}, and the token must "
+                    f"carry the 'vso.work_write' scope. Azure DevOps said: {msg}"
+                ),
+            })
+        return finalize_response({"error": True, "message": f"Azure DevOps returned HTTP {status}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in devops_delete_work_item")
         return finalize_response({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
 
 
