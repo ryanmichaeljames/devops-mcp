@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500">
+<rect width="100%" height="100%" fill="#09090b"/>
+<defs>
+  <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+    <path d="M 80 0 L 0 0 0 80" fill="none" stroke="#111114" stroke-width="1"/>
+  </pattern>
+</defs>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+
+<g font-family="DejaVu Sans Mono, monospace">
+  <rect x="95" y="88" width="7" height="42" fill="#e11d2e"/>
+  <text x="117" y="112" font-size="21" fill="#8b8b91" letter-spacing="1">OPEN-SOURCE MCP SERVER</text>
+
+  <text x="95" y="238" font-family="DejaVu Sans, sans-serif" font-size="102" font-weight="700" fill="#f5f5f4">DEVOPS</text>
+  <text x="95" y="348" font-family="DejaVu Sans, sans-serif" font-size="102" font-weight="700" fill="#f5f5f4">MCP</text>
+
+  <rect x="95" y="370" width="248" height="9" rx="4" fill="#e11d2e"/>
+  <text x="95" y="428" font-size="25" fill="#8b8b91">AI AGENTS  ↔  AZURE DEVOPS</text>
+
+  <g transform="translate(980 132)">
+    <line x1="150" y1="30" x2="150" y2="250" stroke="#f5f5f4" stroke-width="4" stroke-linecap="round"/>
+
+    <circle cx="150" cy="30" r="9" fill="#09090b" stroke="#f5f5f4" stroke-width="4"/>
+    <circle cx="150" cy="105" r="10" fill="#7f101a" stroke="#e11d2e" stroke-width="4"/>
+    <circle cx="150" cy="180" r="9" fill="#09090b" stroke="#f5f5f4" stroke-width="4"/>
+    <circle cx="150" cy="250" r="10" fill="#7f101a" stroke="#e11d2e" stroke-width="4"/>
+
+    <path d="M150 85 C125 85 100 85 78 105 C58 123 52 145 52 166"
+          fill="none" stroke="#8b8b91" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="52" cy="166" r="8" fill="#09090b" stroke="#8b8b91" stroke-width="4"/>
+
+    <path d="M52 166 C52 205 87 220 150 220"
+          fill="none" stroke="#e11d2e" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="89" cy="213" r="5" fill="#e11d2e"/>
+
+    <path d="M150 105 C188 105 214 105 236 127 C255 146 259 168 259 190"
+          fill="none" stroke="#8b8b91" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="259" cy="190" r="8" fill="#09090b" stroke="#8b8b91" stroke-width="4"/>
+
+    <line x1="338" y1="62" x2="338" y2="218" stroke="#25252a" stroke-width="3"/>
+    <line x1="338" y1="62" x2="300" y2="62" stroke="#25252a" stroke-width="3"/>
+    <line x1="338" y1="114" x2="300" y2="114" stroke="#25252a" stroke-width="3"/>
+    <line x1="338" y1="166" x2="300" y2="166" stroke="#25252a" stroke-width="3"/>
+    <line x1="338" y1="218" x2="300" y2="218" stroke="#25252a" stroke-width="3"/>
+
+    <rect x="284" y="50" width="18" height="24" rx="3" fill="none" stroke="#f5f5f4" stroke-width="3"/>
+    <rect x="284" y="102" width="18" height="24" rx="3" fill="none" stroke="#f5f5f4" stroke-width="3"/>
+    <rect x="284" y="154" width="18" height="24" rx="3" fill="#7f101a" stroke="#e11d2e" stroke-width="3"/>
+    <rect x="284" y="206" width="18" height="24" rx="3" fill="none" stroke="#f5f5f4" stroke-width="3"/>
+
+    <line x1="359" y1="62" x2="379" y2="62" stroke="#f5f5f4" stroke-width="3"/>
+    <line x1="359" y1="114" x2="379" y2="114" stroke="#f5f5f4" stroke-width="3"/>
+    <line x1="359" y1="166" x2="389" y2="166" stroke="#e11d2e" stroke-width="3"/>
+    <line x1="359" y1="218" x2="379" y2="218" stroke="#f5f5f4" stroke-width="3"/>
+  </g>
+
+  <text x="1040" y="442" font-size="16" fill="#8b8b91">PIPELINES  •  REPOS  •  PULL REQUESTS  •  WORK ITEMS</text>
+</g>
+
+<g stroke="#25252a" stroke-width="2" fill="none">
+  <path d="M62 126 V62 H210"/>
+  <path d="M1538 374 V438 H1390"/>
+</g>
+
+<g stroke="#e11d2e" stroke-width="3">
+  <line x1="40" y1="32" x2="40" y2="58"/>
+  <line x1="780" y1="32" x2="780" y2="58"/>
+  <line x1="1260" y1="32" x2="1260" y2="58"/>
+  <line x1="1558" y1="32" x2="1558" y2="58"/>
+  <line x1="1534" y1="78" x2="1560" y2="78"/>
+  <line x1="1534" y1="422" x2="1560" y2="422"/>
+</g>
+</svg>

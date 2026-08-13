@@ -1,6 +1,8 @@
-# devops-mcp
+![devops-mcp](https://raw.githubusercontent.com/ryanmichaeljames/devops-mcp/main/assets/devops-mcp-banner.svg)
 
+[![CI](https://github.com/ryanmichaeljames/devops-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmichaeljames/devops-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/devops-mcp)](https://pypi.org/project/devops-mcp/)
+[![Downloads](https://img.shields.io/pypi/dm/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/devops-mcp)](LICENSE)
 
