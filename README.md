@@ -3,7 +3,6 @@
 [![CI](https://github.com/ryanmichaeljames/devops-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmichaeljames/devops-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![Downloads](https://img.shields.io/pypi/dm/devops-mcp)](https://pypi.org/project/devops-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/devops-mcp)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io/) server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with [MCPServer](https://github.com/modelcontextprotocol/python-sdk) (the Python MCP SDK's ergonomic server class) over stdio transport.
