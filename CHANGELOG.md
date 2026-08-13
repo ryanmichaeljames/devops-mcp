@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-08-13
+
+### Added
+
+- `devops_list_queries` — browse the saved-query folder hierarchy, or search saved queries by name.
+- `devops_get_query` — read one saved query or folder, including its WIQL, by GUID or path.
+- `devops_run_query` — run a saved query and return the resulting work items with their fields hydrated.
+- `devops_create_query` _(write)_ — save a new WIQL query under a folder; `validate_only=true` checks the WIQL without saving.
+- `devops_create_query_folder` _(write)_ — create a folder in the query hierarchy.
+- `devops_update_query` _(write)_ — rename, re-WIQL, move, or undelete a saved query or folder.
+- `devops_delete_query` _(delete)_ — soft-delete a query or folder (folders cascade); restorable with `devops_update_query`. Registered only under `AZDO_ALLOW_DELETE=true`.
+
 ## [1.5.0] - 2026-08-12
 
 ### Added
@@ -195,6 +207,7 @@ Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 - **Quality gates** — `ruff` linting and `pytest` (with `pytest-asyncio`); CI runs the matrix across Python 3.10, 3.11, and 3.12 with an import smoke test.
 - **PyPI publishing** — a tag-driven (`v*.*.*`) GitHub Actions workflow (gate → build → publish) using OIDC trusted publishing.
 
+[1.6.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.2.1...v1.3.0
