@@ -20,6 +20,7 @@ import devops_mcp.tools.attachments  # noqa: E402, F401
 import devops_mcp.tools.discovery  # noqa: E402, F401
 import devops_mcp.tools.pipelines  # noqa: E402, F401
 import devops_mcp.tools.pull_requests  # noqa: E402, F401
+import devops_mcp.tools.queries  # noqa: E402, F401
 import devops_mcp.tools.repositories  # noqa: E402, F401
 import devops_mcp.tools.service_connections  # noqa: E402, F401
 import devops_mcp.tools.variable_groups  # noqa: E402, F401

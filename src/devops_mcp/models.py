@@ -2122,3 +2122,334 @@ class LinkWorkItemAttachmentInput(AzDoBaseInput):
                 "'url' (a full Azure DevOps attachment URL), not both and not neither."
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Saved queries (query hierarchy)
+# ---------------------------------------------------------------------------
+
+QueryExpand = Literal["none", "minimal", "wiql", "clauses", "all"]
+
+_QUERY_EXPAND_DESCRIPTION = (
+    "How much of each query to return. This is NOT a simple more-is-more scale "
+    "(key sets measured live): 'none' returns query_type, created_by and the "
+    "created/modified dates but NO wiql and NO columns; 'minimal' returns wiql "
+    "and query_type but DROPS created_by, the dates and the links; 'wiql' is "
+    "'none' plus wiql AND columns; 'clauses'/'all' add the structured clause "
+    "tree on top. query_type comes back at every level. COLUMNS ARRIVE ONLY AT "
+    "'wiql' OR 'all' — ask for one of those when you need the query text and its "
+    "metadata together."
+)
+
+_QUERY_REF_DESCRIPTION = (
+    "The query or folder, addressed either by GUID or by its path in the query "
+    "hierarchy (e.g. 'Shared Queries/Website team/All Bugs'). A path must start "
+    "with 'Shared Queries' or 'My Queries' — those are the only two roots. A "
+    "SOFT-DELETED item can only be addressed by GUID: its path stops resolving "
+    "the moment it is deleted, and include_deleted does not bring it back. Note "
+    "'My Queries' is per-identity: it resolves to the personal folder of whatever "
+    "identity this server authenticates as, which may not be your own."
+)
+
+_QUERY_PARENT_DESCRIPTION = (
+    "The folder to create in, by GUID or path (e.g. 'Shared Queries' or "
+    "'Shared Queries/Website team'). Defaults to 'Shared Queries' so the result "
+    "is visible to the whole team — 'My Queries' is the private folder of the "
+    "identity this server authenticates as, which may not be your own."
+)
+
+
+def _validate_query_name(value: str | None) -> str | None:
+    """Validate a query/folder display name.
+
+    A name is a single node in the hierarchy, so a '/' or '\\' in it would be
+    read as a path separator by every route that addresses the item afterwards.
+    Reject it here rather than letting it create an unaddressable item.
+    """
+    if value is None:
+        return None
+    name = value.strip()
+    if not name:
+        raise ValueError("'name' must not be empty or whitespace-only.")
+    for sep in ("/", "\\"):
+        if sep in name:
+            raise ValueError(
+                f"'name' must not contain {sep!r} — it is a single node in the query "
+                "hierarchy, not a path. Use 'parent' (or 'move_to') to choose the folder."
+            )
+    return name
+
+
+class ListQueriesInput(AzDoBaseInput):
+    """Input for browsing the saved-query hierarchy, or searching queries by name.
+
+    Two modes over one endpoint: without name_filter the response is the folder
+    hierarchy ('My Queries' and 'Shared Queries' roots, children nested to
+    'depth'); with name_filter it is a flat name search.
+    """
+
+    name_filter: str | None = Field(
+        default=None,
+        description=(
+            "Free-text filter matched against QUERY names only — folder names are "
+            "NOT searched, so a filter that names a folder exactly returns zero "
+            "results. Browse the hierarchy (omit this, use 'depth') to find a "
+            "folder. When set, the tool switches from hierarchy mode to a flat "
+            "name search (results are not nested and 'depth' is ignored). An "
+            "empty string is not a valid filter."
+        ),
+        min_length=1,
+        max_length=200,
+    )
+    depth: int = Field(
+        default=1,
+        description=(
+            "How many levels of children to return in hierarchy mode. 0 returns "
+            "only the two root folders; 1 returns their immediate children."
+        ),
+        ge=0,
+        le=2,
+    )
+    expand: QueryExpand = Field(
+        default="none",
+        description=_QUERY_EXPAND_DESCRIPTION,
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description=(
+            "Also return soft-deleted queries and folders. Query delete is soft, "
+            "so a 'missing' query is often here — and this listing is the only "
+            "way to get its GUID, which is the only way to address it (a deleted "
+            "item's path stays a 404 no matter what)."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description=(
+            "Maximum results in search mode (max 200). There is no continuation "
+            "token on this endpoint — if 'has_more' comes back true, narrow "
+            "name_filter rather than paging."
+        ),
+        ge=1,
+        le=200,
+    )
+
+
+class GetQueryInput(AzDoBaseInput):
+    """Input for reading one saved query or folder, by GUID or by path."""
+
+    query: str = Field(
+        description=_QUERY_REF_DESCRIPTION,
+        min_length=1,
+    )
+    expand: QueryExpand = Field(
+        default="minimal",
+        description=_QUERY_EXPAND_DESCRIPTION,
+    )
+    depth: int = Field(
+        default=0,
+        description="For a folder, how many levels of children to include (0 = none).",
+        ge=0,
+        le=2,
+    )
+    include_deleted: bool = Field(
+        default=False,
+        description=(
+            "Also match soft-deleted queries and folders. Only works when 'query' "
+            "is a GUID: a soft-deleted item's PATH returns 404 even with this set. "
+            "To find one, set this on the parent FOLDER (with depth=1), or use "
+            "devops_list_queries, and read the deleted child's GUID."
+        ),
+    )
+
+
+class RunQueryInput(AzDoBaseInput):
+    """Input for executing a saved query and hydrating the resulting work items."""
+
+    query: str = Field(
+        description=_QUERY_REF_DESCRIPTION,
+        min_length=1,
+    )
+    team: str | None = Field(
+        default=None,
+        description=(
+            "Team name or ID to run the query as. Matters for queries using "
+            "@CurrentIteration or @TeamAreas — without it the project's default "
+            "team is used, which can silently mean the wrong sprint. A team that "
+            "does not exist is reported by Azure DevOps as an HTTP 500, not a 404."
+        ),
+    )
+    top: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of result rows to return. Does not raise or avoid the "
+            "20,000-item cap Azure DevOps applies to the underlying result set."
+        ),
+        ge=1,
+        le=20000,
+    )
+    time_precision: bool = Field(
+        default=False,
+        description="Use time-of-day (not date-only) precision for DateTime comparisons.",
+    )
+    fetch_details: bool = Field(
+        default=True,
+        description=(
+            "Fetch field values for the returned work items (batched in groups of "
+            "200). Set False to get only the work item IDs."
+        ),
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description=(
+            "Field reference names to fetch (e.g. 'System.Title'). Defaults to the "
+            "query's own selected columns."
+        ),
+        max_length=100,
+    )
+
+
+class CreateQueryInput(AzDoBaseInput):
+    """Input for saving a new WIQL query under a folder."""
+
+    name: str = Field(
+        description="Display name for the new query.",
+        min_length=1,
+        max_length=255,
+    )
+    wiql: str = Field(
+        description=(
+            "The WIQL text, e.g. \"SELECT [System.Id], [System.Title] FROM WorkItems "
+            "WHERE [System.WorkItemType] = 'Bug'\". queryType, columns and sortColumns "
+            "are derived server-side from this text — do not try to set them."
+        ),
+        min_length=1,
+        max_length=32000,
+    )
+    parent: str = Field(
+        default="Shared Queries",
+        description=_QUERY_PARENT_DESCRIPTION,
+        min_length=1,
+    )
+    validate_only: bool = Field(
+        default=False,
+        description=(
+            "Parse and validate the WIQL without creating anything. Use this to "
+            "check a query before persisting it."
+        ),
+    )
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return _validate_query_name(v)  # type: ignore[return-value]
+
+
+class CreateQueryFolderInput(AzDoBaseInput):
+    """Input for creating a folder in the saved-query hierarchy."""
+
+    name: str = Field(
+        description="Display name for the new folder.",
+        min_length=1,
+        max_length=255,
+    )
+    parent: str = Field(
+        default="Shared Queries",
+        description=_QUERY_PARENT_DESCRIPTION,
+        min_length=1,
+    )
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return _validate_query_name(v)  # type: ignore[return-value]
+
+
+class UpdateQueryInput(AzDoBaseInput):
+    """Input for renaming, re-WIQLing, moving, or undeleting a query or folder."""
+
+    query: str = Field(
+        description=_QUERY_REF_DESCRIPTION,
+        min_length=1,
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "New display name (rename). Omit to leave the name unchanged. The two "
+            "ROOT folders cannot be renamed through this tool: Azure DevOps allows "
+            "it (HTTP 200) and it breaks path addressing for every query beneath "
+            "the root, so the request is refused client-side — including renaming "
+            "one root to the OTHER root's name, which collides two roots on one "
+            "path. The one exception is the repair of a root that was ALREADY "
+            "renamed: addressed by that root's GUID, it may be set back to "
+            "whichever of 'Shared Queries' / 'My Queries' is not currently in use."
+        ),
+        max_length=255,
+    )
+    wiql: str | None = Field(
+        default=None,
+        description=(
+            "New WIQL text. Editing it re-derives queryType/columns/sortColumns "
+            "server-side, so switching FROM WorkItems to FROM WorkItemLinks changes "
+            "the query from 'flat' to a link type ('tree', or 'oneHop' for MODE "
+            "(MustContain)) and changes what devops_run_query returns."
+        ),
+        max_length=32000,
+    )
+    move_to: str | None = Field(
+        default=None,
+        description=(
+            "Destination folder (GUID or path) to move this query or folder into. "
+            "Combined with a rename, the rename is applied first. A ROOT folder "
+            "('Shared Queries', 'My Queries') cannot be moved — it has no parent, "
+            "and the attempt is refused client-side."
+        ),
+    )
+    undelete: bool = Field(
+        default=False,
+        description=(
+            "Restore a soft-deleted query or folder. Content is restored; "
+            "permission changes on the item are NOT. Address the item by GUID — a "
+            "soft-deleted item's path does not resolve. Restoring an item that is "
+            "already live is accepted by Azure DevOps and does nothing; the "
+            "response reports which of the two happened in 'undelete_state'."
+        ),
+    )
+    undelete_descendants: bool = Field(
+        default=False,
+        description=(
+            "When undeleting a folder, also restore the queries inside it. "
+            "Requires undelete=True, and only takes effect on the call that "
+            "actually transitions the folder from deleted to live — re-sending it "
+            "against an already-restored folder leaves its descendants deleted."
+        ),
+    )
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def _check_name(cls, v: str | None) -> str | None:
+        return _validate_query_name(v)
+
+    @model_validator(mode="after")
+    def _require_a_change(self) -> "UpdateQueryInput":
+        if not any((self.name, self.wiql, self.move_to, self.undelete)):
+            raise ValueError(
+                "Nothing to update. Supply at least one of 'name' (rename), 'wiql' "
+                "(edit the query text), 'move_to' (move to another folder), or "
+                "'undelete=True' (restore a soft-deleted item)."
+            )
+        if self.undelete_descendants and not self.undelete:
+            raise ValueError(
+                "'undelete_descendants' only applies when restoring an item — set "
+                "'undelete=True' as well, or drop it."
+            )
+        return self
+
+
+class DeleteQueryInput(AzDoBaseInput):
+    """Input for soft-deleting a saved query or folder."""
+
+    query: str = Field(
+        description=_QUERY_REF_DESCRIPTION,
+        min_length=1,
+    )
