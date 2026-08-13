@@ -1,0 +1,84 @@
+name: Bug report
+description: Something in the server or one of its tools does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Only the first three fields are required — fill in the rest if you have them.
+
+        **Do not paste credentials, personal access tokens, client secrets, or tenant or client IDs.** Replace your organization and project names with placeholders if they are sensitive.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead. Paste the tool's error message if there was one.
+      placeholder: |
+        Called devops_list_pipelines and got a 401, but az login is active and the same call works in the REST API directly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The tool call and arguments you used, with anything sensitive replaced by a placeholder.
+      placeholder: |
+        1. devops_list_pipelines with organization "yourorg", project "yourproject"
+        2. Error returned instead of the pipeline list
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: devops-mcp version
+      description: Run `pip show devops-mcp`, or `uv pip show devops-mcp`.
+      placeholder: "1.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: tool
+    attributes:
+      label: Tool name
+      description: Which tool misbehaved, if it was one specific tool.
+      placeholder: devops_list_pipelines
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      options:
+        - Claude Code
+        - Claude Desktop
+        - VS Code
+        - Cursor
+        - Other
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: AZDO_AUTH_TYPE
+      options:
+        - default
+        - azure_cli
+        - interactive
+        - client_secret
+        - managed_identity
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: Anything the server wrote to stderr around the failure. Set `AZDO_LOG_LEVEL=DEBUG` for more. Automatically formatted as code — no backticks needed.
+      render: shell
+
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: This report contains no credentials, personal access tokens, client secrets, or tenant or client IDs.
+          required: true
