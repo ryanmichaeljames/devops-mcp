@@ -1,7 +1,8 @@
-# devops-mcp
+![devops-mcp](https://raw.githubusercontent.com/ryanmichaeljames/devops-mcp/main/assets/devops-mcp-banner.svg)
 
+[![CI](https://github.com/ryanmichaeljames/devops-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmichaeljames/devops-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/devops-mcp)](https://pypi.org/project/devops-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/devops-mcp)](https://pypi.org/project/devops-mcp/)
+[![Downloads](https://img.shields.io/pypi/dm/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/devops-mcp)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io/) server that exposes Azure DevOps as tools for LLMs — pipelines, repositories, pull requests, and work items. Built with [MCPServer](https://github.com/modelcontextprotocol/python-sdk) (the Python MCP SDK's ergonomic server class) over stdio transport.
@@ -100,7 +101,11 @@ The server uses **Microsoft Entra ID (Azure AD) OAuth 2.0** via the [`azure-iden
 
 Write and delete tools are **not registered by default** — they do not appear to the agent at all until explicitly enabled. The server is read-only until `AZDO_ALLOW_WRITE=true` and/or `AZDO_ALLOW_DELETE=true` are set. Each flag is independent; set only the ones you need.
 
-`devops_delete_work_item` is the only tool behind the `delete` gate and the only one annotated `destructiveHint: true`. Its default is the **recoverable** operation: the work item goes to the project's recycle bin and a human can restore it from Boards > Work Items > Recycle Bin. The unrecoverable operation is opt-in per call via `destroy=true`, which erases the work item and all its revisions with no undo — Azure DevOps guards that separately with the project-level *Permanently delete work items* permission, held by Project Administrators by default, so an ordinary contributor's token gets an HTTP 403 rather than a silent permanent delete.
+Two tools sit behind the `delete` gate, and they are the only ones annotated `destructiveHint: true`.
+
+`devops_delete_query` is the milder of the two: query deletion is soft with no permanent option, so a deleted query or folder can be restored with `devops_update_query(undelete=true)` — except its permissions, which do not come back. Deleting a folder cascades to everything inside it.
+
+`devops_delete_work_item`'s default is the **recoverable** operation: the work item goes to the project's recycle bin and a human can restore it from Boards > Work Items > Recycle Bin. The unrecoverable operation is opt-in per call via `destroy=true`, which erases the work item and all its revisions with no undo — Azure DevOps guards that separately with the project-level *Permanently delete work items* permission, held by Project Administrators by default, so an ordinary contributor's token gets an HTTP 403 rather than a silent permanent delete.
 
 ### Env-driven configuration
 
@@ -245,7 +250,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 
 ## Tools
 
-**59 tools** across 8 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
+**66 tools** across 9 domains. Tools marked with a gate are only registered when the corresponding env flag is set.
 
 | Gate | Meaning |
 |---|---|
@@ -323,6 +328,22 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_upload_work_item_attachment` | write | Upload an image (from `file_path` or `data_base64`) and return the attachment reference plus ready-to-paste `embed.markdown` / `embed.html` snippets. Images only — the extension allowlist *and* the file's magic bytes must both agree |
 | `devops_link_work_item_attachment` | write | Add the `AttachedFile` relation that puts an uploaded attachment on the Attachments tab — the second step `devops_upload_work_item_attachment` deliberately does not perform. Idempotent (no PATCH when already linked) and guarded by a `/rev` test op |
 
+### Saved Queries (7 tools)
+
+Queries and folders are addressed either by GUID or by path — `Shared Queries/Website team/All Bugs`. The only two roots are `Shared Queries` (project-wide) and `My Queries` (yours alone); neither root can be renamed or moved through these tools, because Azure DevOps permits the rename and it breaks path addressing for everything beneath it.
+
+| Tool | Gate | Description |
+|---|---|---|
+| `devops_list_queries` | default | Browse the hierarchy from both roots (`depth` up to 2), or set `name_filter` to search by name instead. Search matches **query names only** — folder names are not searched, so a filter naming a folder exactly returns nothing |
+| `devops_get_query` | default | Get one query or folder by GUID or path, including its WIQL, and optionally its children (`depth`). `expand` is not monotonic: `wiql` returns the text *and* the author/date metadata, while `minimal` drops the metadata |
+| `devops_run_query` | default | Run a saved query and return the work items, fields already hydrated in batches. Handles flat, `tree` and `oneHop` result shapes; `team` is required only for queries scoped to a team |
+| `devops_create_query` | write | Save a new WIQL query under a folder. `validate_only=true` parses and validates the WIQL without creating anything |
+| `devops_create_query_folder` | write | Create a folder in the query hierarchy |
+| `devops_update_query` | write | Rename, re-WIQL, move, or undelete a query or folder. No optimistic concurrency exists on this resource — there is no `rev` and no ETag, so a concurrent edit is last-write-wins |
+| `devops_delete_query` | delete | Delete a query or folder; deleting a folder cascades to its contents. The delete is **soft** with no `destroy` option — restore with `devops_update_query(undelete=true)`, though permissions set on the item are not restored |
+
+A soft-deleted item is addressable **only by GUID**: `include_deleted=true` on its *path* still returns 404. To recover one, read its **parent folder** with `devops_get_query(depth=1, include_deleted=true)`, take the child's GUID from the listing, then `devops_update_query(query=<guid>, undelete=true)`.
+
 ### Discovery (2 tools)
 
 | Tool | Gate | Description |
@@ -364,7 +385,7 @@ Read-only. Secret variables (`isSecret: true`) never have their value returned, 
 
 ## API Reference
 
-All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. Service connection and variable group tools use **v7.1** (GA — no preview moniker needed). PR tools (get/list/create/update/tag/link) and work item write operations use **v7.2-preview**. Advanced Security alert tools use **v7.2-preview.1** on the `advsec.dev.azure.com` host.
+All tools use the [Azure DevOps REST API](https://learn.microsoft.com/en-us/rest/api/azure/devops/). Pipeline, repository, and discovery tools use **v7.1**. Work item schema tools (`devops_list_work_item_types`, `devops_list_work_item_fields`) use **v7.1**. Service connection and variable group tools use **v7.1** (GA — no preview moniker needed). PR tools (get/list/create/update/tag/link), work item write operations, and saved-query tools use **v7.2-preview**. Advanced Security alert tools use **v7.2-preview.1** on the `advsec.dev.azure.com` host.
 
 **Note:** `run_id` and `build_id` share the same numeric value — a Pipelines API `run_id` is identical to the Build API `buildId` for the same run. This enables cross-API calls (e.g., use `devops_list_run_logs` to get log IDs, then `devops_get_run_log_content` with the same `build_id`).
 
