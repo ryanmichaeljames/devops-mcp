@@ -271,7 +271,7 @@ Add to `.vscode/mcp.json` in your project root. Note: `.vscode/mcp.json` is giti
 | `devops_get_run_log_content` | default | Get plain-text content of a specific log; bounded to `max_lines` (default 500) by default, with `start_line`/`end_line`/`tail` windowing and a paging envelope (`has_more`/`next_start_line`) |
 | `devops_search_run_log` | default | Search (grep) a log in-process and return only matching lines plus context — non-matching lines never reach the model |
 | `devops_list_build_artifacts` | default | List artifacts produced by a build |
-| `devops_run_pipeline` | write | Trigger a new pipeline run; optionally override branch, template parameters, or queue-time variables |
+| `devops_run_pipeline` | write | Trigger a new pipeline run; optionally override branch, template parameters, or queue-time variables, or skip named stages |
 
 ### Repositories (8 tools)
 

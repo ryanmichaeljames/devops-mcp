@@ -1467,6 +1467,14 @@ class RunPipelineInput(AzDoBaseInput):
             "(e.g., {'MY_VAR': 'my_value'}). Variables must be marked as settable at queue time."
         ),
     )
+    stages_to_skip: list[str] | None = Field(
+        default=None,
+        description=(
+            "Stage names to skip in this run (e.g., ['Deploy']). These are the YAML "
+            "'stage:' identifiers, not the stage display names shown in the UI and in "
+            "run timelines; an unknown name is rejected with HTTP 400. Omit to run every stage."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ body:
     attributes:
       label: devops-mcp version
       description: Run `pip show devops-mcp`, or `uv pip show devops-mcp`.
-      placeholder: "1.6.0"
+      placeholder: "1.7.0"
     validations:
       required: true
 

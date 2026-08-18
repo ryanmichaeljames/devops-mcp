@@ -785,7 +785,9 @@ async def devops_run_pipeline(params: RunPipelineInput, ctx: Context) -> str:
 
     Queues a pipeline run and returns the run ID, state, and web URL.
     Optionally override the target branch, template parameters, or
-    queue-time variables. Requires AZDO_ALLOW_WRITE=true.
+    queue-time variables, and skip named stages via stages_to_skip
+    (the YAML 'stage:' identifiers, not their display names).
+    Requires AZDO_ALLOW_WRITE=true.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
@@ -807,6 +809,9 @@ async def devops_run_pipeline(params: RunPipelineInput, ctx: Context) -> str:
                 k: {"value": str(v), "isSecret": False}
                 for k, v in params.variables.items()
             }
+
+        if params.stages_to_skip is not None:
+            body["stagesToSkip"] = list(params.stages_to_skip)
 
         response = await request_with_retry(
             app_ctx.http_client,
