@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-08-20
+
+### Added
+
+- Interactive sign-in lands on a branded page matching the project banner, replacing azure-identity's one-line text response.
+
+### Changed
+
+- A failed interactive sign-in shows the Entra error and description instead of a success message.
+- README leads with MCP client config rather than shell commands, and is roughly half its previous length.
+
 ## [1.7.0] - 2026-08-19
 
 ### Added
@@ -213,6 +224,7 @@ Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 - **Quality gates** — `ruff` linting and `pytest` (with `pytest-asyncio`); CI runs the matrix across Python 3.10, 3.11, and 3.12 with an import smoke test.
 - **PyPI publishing** — a tag-driven (`v*.*.*`) GitHub Actions workflow (gate → build → publish) using OIDC trusted publishing.
 
+[1.8.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.4.0...v1.5.0

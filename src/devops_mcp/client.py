@@ -24,6 +24,8 @@ from azure.identity import (
     TokenCachePersistenceOptions,
 )
 
+from .auth_redirect import BrandedAuthCodeRedirectServer
+
 logger = logging.getLogger(__name__)
 
 API_VERSION = "7.1"
@@ -669,6 +671,31 @@ def _save_auth_record(record: "AuthenticationRecord", record_path: Path) -> None
         )
 
 
+def _new_interactive_credential(**kwargs) -> InteractiveBrowserCredential:
+    """Build an InteractiveBrowserCredential that serves the branded redirect page.
+
+    ``_server_class`` is a private azure-identity keyword: InteractiveBrowserCredential
+    pops it in ``__init__`` and instantiates it as the loopback listener that catches
+    the post-sign-in ``?code=`` redirect.  Passing our own server swaps azure-identity's
+    one-line "Authentication complete" response for the styled page in auth_redirect.py.
+
+    Should a future azure-identity drop that keyword, it would fall through to MSAL and
+    raise TypeError, so retry once without it — an unstyled landing page is a far better
+    outcome than a credential that cannot be constructed.
+    """
+    try:
+        return InteractiveBrowserCredential(
+            _server_class=BrandedAuthCodeRedirectServer, **kwargs
+        )
+    except TypeError as exc:
+        logger.warning(
+            "azure-identity rejected the _server_class keyword (%s); "
+            "falling back to its default sign-in redirect page",
+            exc,
+        )
+        return InteractiveBrowserCredential(**kwargs)
+
+
 def _build_interactive_credential() -> InteractiveBrowserCredential:
     """Build an InteractiveBrowserCredential with a persistent token cache.
 
@@ -695,9 +722,9 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
             "interactive credential uses in-memory token cache only"
         )
         return (
-            InteractiveBrowserCredential(tenant_id=tenant_id)
+            _new_interactive_credential(tenant_id=tenant_id)
             if tenant_id
-            else InteractiveBrowserCredential()
+            else _new_interactive_credential()
         )
 
     # Optional profile suffix isolates the cache + sidecar per tenant/account so
@@ -727,9 +754,9 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
             exc,
         )
         return (
-            InteractiveBrowserCredential(tenant_id=tenant_id)
+            _new_interactive_credential(tenant_id=tenant_id)
             if tenant_id
-            else InteractiveBrowserCredential()
+            else _new_interactive_credential()
         )
 
     config_dir = _get_user_config_dir()
@@ -743,7 +770,7 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
         kwargs["authentication_record"] = auth_record
 
     try:
-        credential = InteractiveBrowserCredential(**kwargs)
+        credential = _new_interactive_credential(**kwargs)
     except Exception as exc:
         logger.warning(
             "Could not build InteractiveBrowserCredential with persistent cache (%s); "
@@ -753,9 +780,9 @@ def _build_interactive_credential() -> InteractiveBrowserCredential:
             exc,
         )
         return (
-            InteractiveBrowserCredential(tenant_id=tenant_id)
+            _new_interactive_credential(tenant_id=tenant_id)
             if tenant_id
-            else InteractiveBrowserCredential()
+            else _new_interactive_credential()
         )
 
     logger.info(
