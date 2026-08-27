@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-08-27
+
+### Added
+
+- `devops_set_variable_group_variables` _(write)_ — create or update named variables in a group; every variable you do not name, secrets included, is carried through unchanged. Key Vault-backed groups are refused.
+- `devops_create_variable_group` _(write)_ — create a variable group with its initial variables.
+- `devops_remove_variable_group_variables` _(delete)_ — remove named variables from a group, all-or-nothing unless `ignore_missing=true`. Gated on `AZDO_ALLOW_DELETE`, which orgs already running that gate gain without further opt-in.
+- `devops_delete_variable_group` _(delete)_ — permanently delete a variable group — Azure DevOps Library has no recycle bin. Gated on `AZDO_ALLOW_DELETE`.
+
 ## [1.8.0] - 2026-08-20
 
 ### Added
@@ -224,6 +233,7 @@ Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 - **Quality gates** — `ruff` linting and `pytest` (with `pytest-asyncio`); CI runs the matrix across Python 3.10, 3.11, and 3.12 with an import smoke test.
 - **PyPI publishing** — a tag-driven (`v*.*.*`) GitHub Actions workflow (gate → build → publish) using OIDC trusted publishing.
 
+[1.9.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.5.0...v1.6.0

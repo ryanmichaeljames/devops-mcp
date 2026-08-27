@@ -1819,6 +1819,249 @@ class GetVariableGroupInput(AzDoBaseInput):
     )
 
 
+class VariableGroupVariableInput(BaseModel):
+    """One variable to create or update inside a variable group.
+
+    Deliberately NOT AzDoBaseInput: this is a nested payload item, and it does
+    not strip whitespace — a variable value's leading/trailing whitespace is
+    part of the value. Only 'name' is stripped.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(
+        description="Variable name. Matched case-insensitively against the existing variables.",
+        min_length=1,
+    )
+    value: str | None = Field(
+        default=None,
+        description=(
+            "The value to store. Omitting it (or passing null — the two are treated "
+            "identically) leaves an existing variable's value unchanged, and is an "
+            "error for a variable that does not exist yet. An empty string stores an "
+            "empty value on a PLAIN variable only: Azure DevOps ignores an empty "
+            "value on a secret (it keeps the old one), so an empty string on a "
+            "secret is refused here rather than reported as a write that happened."
+        ),
+    )
+    is_secret: bool | None = Field(
+        default=None,
+        description=(
+            "True stores the value as a secret. Omit to inherit the existing flag "
+            "(False for a brand-new variable). Turning an existing secret back into "
+            "a plain variable requires supplying 'value' in the same call — the old "
+            "value cannot be read back, so it would otherwise be destroyed."
+        ),
+    )
+    is_readonly: bool | None = Field(
+        default=None,
+        description=(
+            "True marks the variable read-only in the Library UI. Omit to inherit "
+            "the existing flag (False for a brand-new variable)."
+        ),
+    )
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Variable 'name' must not be blank.")
+        return stripped
+
+    @model_validator(mode="after")
+    def reject_empty_secret_value(self) -> "VariableGroupVariableInput":
+        # Only the explicit is_secret=True case can be judged here; an entry that
+        # inherits the flag from an existing secret is caught during the merge,
+        # where the stored flag is known.
+        if self.is_secret is True and self.value == "":
+            raise empty_secret_value_error(self.name)
+        return self
+
+
+def empty_secret_value_error(name: str) -> ValueError:
+    """The refusal for an empty-string value on a SECRET variable.
+
+    Live-verified 2026-08-26: the service accepts `{"isSecret": true, "value": ""}`
+    with HTTP 200 and echoes it back as `{"value": null, "isSecret": true}`, but
+    keeps the OLD secret — a pipeline run afterwards still resolves the previous
+    value. Nothing is destroyed, yet the write silently does not happen, so
+    reporting it as an update would be a false success. Refuse it at the edge
+    instead, the same way secret demotion without a value is refused.
+    """
+    return ValueError(
+        f"Variable {name!r} is a secret and its value is an empty string. Azure "
+        "DevOps ignores an empty value on a secret variable — it answers success "
+        "and keeps the value that is already stored, so this call would report a "
+        "write that did not happen. Supply a non-empty value, drop 'value' to "
+        "leave the secret as it is, or delete the variable with "
+        "devops_remove_variable_group_variables if that is what you meant. (An "
+        "empty string is fine on a plain, non-secret variable.)"
+    )
+
+
+def _reject_duplicate_variable_names(
+    v: list[VariableGroupVariableInput],
+) -> list[VariableGroupVariableInput]:
+    """Refuse two entries whose names differ only by case.
+
+    Azure DevOps treats variable names as case-insensitive at consumption, so a
+    payload naming both 'Foo' and 'foo' has no single meaning — and on create it
+    would produce a group holding both keys.
+    """
+    seen: dict[str, str] = {}
+    for variable in v:
+        key = variable.name.lower()
+        if key in seen:
+            raise ValueError(
+                f"Duplicate variable name in 'variables': {variable.name!r} and "
+                f"{seen[key]!r} differ only by case. Variable names are "
+                "case-insensitive — supply each variable once."
+            )
+        seen[key] = variable.name
+    return v
+
+
+class SetVariableGroupVariablesInput(AzDoBaseInput):
+    """Input for creating or updating variables inside an existing variable group.
+
+    Only the named variables are touched; every other variable in the group is
+    carried through unchanged.
+    """
+
+    group_id: int = Field(
+        description="The variable group ID.",
+        ge=1,
+    )
+    variables: list[VariableGroupVariableInput] = Field(
+        description=(
+            "Variables to create or update. Each entry is upserted by name "
+            "(case-insensitive); existing variables not named here are untouched."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("variables", mode="after")
+    @classmethod
+    def validate_unique_names(
+        cls, v: list[VariableGroupVariableInput]
+    ) -> list[VariableGroupVariableInput]:
+        return _reject_duplicate_variable_names(v)
+
+
+class RemoveVariableGroupVariablesInput(AzDoBaseInput):
+    """Input for removing variables from an existing variable group."""
+
+    group_id: int = Field(
+        description="The variable group ID.",
+        ge=1,
+    )
+    names: list[str] = Field(
+        description=(
+            "Names of the variables to remove, matched case-insensitively. "
+            "All-or-nothing by default: if any name is absent, nothing is removed."
+        ),
+        min_length=1,
+    )
+    ignore_missing: bool = Field(
+        default=False,
+        description=(
+            "When True, names that are not present in the group are skipped and "
+            "reported as skipped_missing instead of failing the call — which makes "
+            "a retried removal idempotent."
+        ),
+    )
+
+    @field_validator("names", mode="after")
+    @classmethod
+    def validate_names(cls, v: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for name in v:
+            stripped = name.strip()
+            if not stripped:
+                raise ValueError("'names' must not contain a blank entry.")
+            key = stripped.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(stripped)
+        return deduped
+
+
+class CreateVariableGroupInput(AzDoBaseInput):
+    """Input for creating a new variable group in a project.
+
+    The group is always a classic ('Vsts') group — type is not settable, because
+    a Key Vault-backed group needs a service connection and a vault this server
+    deliberately does not manage.
+    """
+
+    name: str = Field(
+        description=(
+            "Name of the new variable group. Must be unique in the project — a "
+            "duplicate is rejected by Azure DevOps."
+        ),
+        min_length=1,
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional description shown in Pipelines -> Library.",
+    )
+    variables: list[VariableGroupVariableInput] = Field(
+        description=(
+            "Variables to create the group with. Every entry must carry a "
+            "'value' — there is no existing value to inherit on a new group."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def validate_group_name(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("'name' must not be blank.")
+        return stripped
+
+    @field_validator("variables", mode="after")
+    @classmethod
+    def validate_variables(
+        cls, v: list[VariableGroupVariableInput]
+    ) -> list[VariableGroupVariableInput]:
+        _reject_duplicate_variable_names(v)
+        for variable in v:
+            if variable.value is None:
+                raise ValueError(
+                    f"Variable {variable.name!r} has no 'value'. A new variable "
+                    "group has no existing values to inherit, so every variable "
+                    "must be given one (an empty string is accepted for a plain "
+                    "variable, but not for a secret — Azure DevOps ignores it there)."
+                )
+        return v
+
+
+class DeleteVariableGroupInput(AzDoBaseInput):
+    """Input for permanently deleting a variable group.
+
+    There is no recycle bin for Azure DevOps Library items: a deleted variable
+    group and its secrets cannot be restored by any tool here or in the portal.
+    """
+
+    group_id: int = Field(
+        description="The variable group ID.",
+        ge=1,
+    )
+    all_projects: bool = Field(
+        default=False,
+        description=(
+            "When True, delete the group from every project that references it. "
+            "By default only the resolved project is passed, which for a group "
+            "that is not shared deletes it outright."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Work item attachments
 # ---------------------------------------------------------------------------

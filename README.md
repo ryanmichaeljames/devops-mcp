@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/pypi/dm/devops-mcp)](https://pypi.org/project/devops-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/devops-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that gives LLMs your Azure DevOps: pipelines, repos, pull requests, work items, and more. 66 tools, read-only by default.
+An [MCP](https://modelcontextprotocol.io/) server that gives LLMs your Azure DevOps: pipelines, repos, pull requests, work items, and more. 70 tools, read-only by default.
 
 Runs over stdio, so it works with Claude Code, GitHub Copilot, Cursor, and any other MCP client.
 
@@ -156,7 +156,7 @@ Keep these files out of source control — they can hold a client secret. Restar
 
 ## Tools
 
-66 tools across 9 domains. The **gate** column says when a tool is registered: `default` always, `write` under `AZDO_ALLOW_WRITE=true`, `delete` under `AZDO_ALLOW_DELETE=true`.
+70 tools across 9 domains. The **gate** column says when a tool is registered: `default` always, `write` under `AZDO_ALLOW_WRITE=true`, `delete` under `AZDO_ALLOW_DELETE=true`.
 
 ### Pipelines (10)
 
@@ -270,12 +270,20 @@ Needs GitHub Advanced Security for Azure DevOps enabled on the repo.
 
 Health is three separate signals: `is_ready`, `is_disabled`, and `is_outdated` (stored config no longer matches the real resource — usually an expired secret). A ready connection can still fail to authenticate.
 
-### Variable groups (2)
+### Variable groups (6)
 
 | Tool | Gate | Description |
 |---|---|---|
 | `devops_list_variable_groups` | default | List groups; values are omitted unless asked for |
 | `devops_get_variable_group` | default | Get one group with redacted values |
+| `devops_set_variable_group_variables` | write | Create or update named variables; everything else is left alone |
+| `devops_create_variable_group` | write | Create a group with its initial variables |
+| `devops_remove_variable_group_variables` | delete | Remove named variables; all-or-nothing unless `ignore_missing=true` |
+| `devops_delete_variable_group` | delete | Delete a group — permanent, there is no recycle bin for Library items |
+
+Azure DevOps has no variable-level write API: the only update verb replaces the whole group, so the variable tools read, merge, and write it back for you. Two consequences. A secret you are not touching is re-sent without its value and survives, but a secret cannot be turned back into a plain variable unless you supply the new value in the same call. And there is no ETag or revision check on this API, so a change another actor makes between the read and the write is lost — compare `modified_on` if that matters.
+
+Key Vault-backed groups are refused by the variable tools; change the secret in the vault instead. They can still be deleted, which removes nothing from the vault.
 
 ---
 
