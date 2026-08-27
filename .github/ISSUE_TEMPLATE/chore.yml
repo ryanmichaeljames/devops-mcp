@@ -1,0 +1,58 @@
+name: Chore
+description: Build, CI, tests, dependencies, or repo housekeeping — not a tool change
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For work that does not add or change a tool: CI, linting, type checking, test infrastructure, dependencies, packaging, docs tooling.
+
+        Changing a **tool**? Use the feature request form instead.
+
+  - type: textarea
+    id: task
+    attributes:
+      label: What needs doing?
+      description: The change itself. Name the file or workflow if you know it.
+      placeholder: |
+        Run the test suite against Python 3.13 in the CI matrix.
+    validations:
+      required: true
+
+  - type: textarea
+    id: cost
+    attributes:
+      label: What does it cost us today?
+      description: What goes wrong, or gets missed, without it. If it is preventing something else, say what.
+      placeholder: |
+        Nothing catches a 3.13-only failure until someone reports it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Build or CI
+        - Tests
+        - Linting or type checking
+        - Dependencies
+        - Packaging or release
+        - Repo hygiene
+        - Other
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Does it change how the server behaves at runtime?
+      options:
+        - "No — tooling only"
+        - "Yes"
+        - Not sure
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Suggested scope, a sequencing plan, or links to the tool's documentation.
