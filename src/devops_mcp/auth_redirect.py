@@ -2,7 +2,9 @@
 
 ``InteractiveBrowserCredential`` starts a throwaway HTTP server on
 ``http://localhost:{8400..8999}`` and parks the browser there while it captures
-the ``?code=`` (or ``?error=``) query string Entra ID redirects back with.  The
+the ``code`` (or ``error``) params Entra ID redirects back with — as a GET query
+string, or as a POSTed form body when the credential asks for
+``response_mode=form_post`` (azure-identity >= 1.26).  The
 stock azure-identity handler answers that request with a single unstyled line of
 text — ``Authentication complete. You can close this window.`` — which is the
 last thing a user sees after signing in to this server.
@@ -284,7 +286,19 @@ class BrandedAuthCodeRedirectHandler(BaseHTTPRequestHandler):
             return
 
         query = self.path.split("?", 1)[-1] if "?" in self.path else ""
-        parsed = parse_qs(query, keep_blank_values=True)
+        self._respond(query)
+
+    def do_POST(self) -> None:  # noqa: N802 - name fixed by BaseHTTPRequestHandler
+        """Handle ``response_mode=form_post``: the params arrive in the body.
+
+        azure-identity >= 1.26 builds the auth URI with form_post, so Entra
+        POSTs the code here instead of appending it to a GET query string.
+        """
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        self._respond(self.rfile.read(length).decode("utf-8"))
+
+    def _respond(self, encoded_params: str) -> None:
+        parsed = parse_qs(encoded_params, keep_blank_values=True)
         params = {
             k: v[0] if isinstance(v, list) and len(v) == 1 else v
             for k, v in parsed.items()
