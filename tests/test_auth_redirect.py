@@ -145,6 +145,27 @@ def test_server_captures_query_params_and_serves_the_page(redirect_server):
     assert "the-code" not in body
 
 
+def test_server_captures_form_post_params(redirect_server):
+    """azure-identity >= 1.26 uses response_mode=form_post: params in the body."""
+    port = redirect_server.server_address[1]
+    thread, result = _drive(redirect_server)
+
+    request = urllib.request.Request(
+        f"http://localhost:{port}/",
+        data=b"code=the-code&session_state=abc",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        body = response.read().decode("utf-8")
+
+    thread.join(timeout=5)
+
+    assert result["params"] == {"code": "the-code", "session_state": "abc"}
+    assert "SIGNED IN" in body
+    assert "the-code" not in body
+
+
 def test_server_serves_the_error_page_on_a_failed_sign_in(redirect_server):
     port = redirect_server.server_address[1]
     thread, result = _drive(redirect_server)

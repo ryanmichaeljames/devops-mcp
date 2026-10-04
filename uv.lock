@@ -389,7 +389,7 @@ wheels = [
 
 [[package]]
 name = "devops-mcp"
-version = "1.9.0"
+version = "1.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "azure-identity" },

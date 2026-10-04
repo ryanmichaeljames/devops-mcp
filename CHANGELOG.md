@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-10-05
+
+### Fixed
+
+- Interactive sign-in no longer fails with `501 Unsupported method ('POST')` on azure-identity 1.26+ — the branded redirect page now accepts form-post responses.
+
 ## [1.9.0] - 2026-08-27
 
 ### Added
@@ -233,6 +239,7 @@ Tools marked _(write)_ are registered only when `AZDO_ALLOW_WRITE=true`.
 - **Quality gates** — `ruff` linting and `pytest` (with `pytest-asyncio`); CI runs the matrix across Python 3.10, 3.11, and 3.12 with an import smoke test.
 - **PyPI publishing** — a tag-driven (`v*.*.*`) GitHub Actions workflow (gate → build → publish) using OIDC trusted publishing.
 
+[1.9.1]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/ryanmichaeljames/devops-mcp/compare/v1.6.0...v1.7.0
